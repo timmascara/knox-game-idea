@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Home Court</title>
+    <link rel="stylesheet" href="/src/ui/styles.css" />
+  </head>
+  <body>
+    <!-- The renderer canvas is created and appended by the engine. -->
+    <div id="app"></div>
+
+    <!-- Boot / loading overlay -->
+    <div id="loading" class="overlay">
+      <div class="loading-inner">
+        <div class="logo">HOME<span>COURT</span></div>
+        <div class="loading-bar"><div id="loading-fill" class="loading-fill"></div></div>
+        <div id="loading-text" class="loading-text">Loading the park…</div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
