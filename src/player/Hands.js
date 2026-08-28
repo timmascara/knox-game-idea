@@ -41,10 +41,11 @@ export class Hands {
     const mat = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.7, metalness: 0.0 });
     const dark = new THREE.MeshStandardMaterial({ color: 0x2a2f33, roughness: 0.8 });
 
-    // Forearm (sleeve)
-    const forearm = new THREE.Mesh(new THREE.CapsuleGeometry(0.052, 0.22, 4, 8), dark);
+    // Short wrist/sleeve — kept small so it reads as a wrist, not a big dark
+    // blob filling the corner of the screen.
+    const forearm = new THREE.Mesh(new THREE.CapsuleGeometry(0.042, 0.11, 4, 8), dark);
     forearm.rotation.x = Math.PI / 2;
-    forearm.position.set(0, 0, 0.16);
+    forearm.position.set(0, 0, 0.12);
     group.add(forearm);
 
     // Palm

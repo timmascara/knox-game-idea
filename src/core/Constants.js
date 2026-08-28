@@ -75,15 +75,28 @@ export const PLAYER = {
 // Dribble / ball handling
 // ---------------------------------------------------------------------------
 export const DRIBBLE = {
-  // Height the ball rises to in the hand at the top of a bounce.
+  // Height the ball rises to at the top of a bounce (waist/hip high).
   handHeight: 1.02,
-  // How far in front of the eyes the handling position sits.
-  forward: 0.55,
-  // Lateral offset for left/right hand.
-  side: 0.32,
-  baseBounceHz: 1.9, // stationary dribble tempo
-  sprintBounceHz: 2.9,
+  // How far in front of the body the handling position sits. Pushed out enough
+  // that the ball is clearly framed in your lower view while dribbling instead
+  // of hugging your feet off the bottom of the screen.
+  forward: 0.92,
+  // Lateral offset for the left/right hand (kept fairly centred so the ball
+  // reads in front of you, not tucked into a corner).
+  side: 0.22,
+  baseBounceHz: 2.05, // stationary dribble tempo
+  sprintBounceHz: 3.05,
   floorClearance: 0.121, // ball radius, so it kisses the floor
+  // How fast the ball's horizontal position follows the body (weighty, not
+  // instant). Lower = looser/heavier handle.
+  followLambda: 16,
+  // How fast the dribble's facing follows the camera yaw. This decouples the
+  // ball from mouse-look so glancing around never whips the ball about you.
+  yawLambda: 9,
+  // Extra forward push per m/s of movement speed (drive the ball ahead of you).
+  speedForward: 0.06,
+  speedForwardMax: 0.5,
+  holdHeight: 1.06, // where the ball is palmed while airborne (chest-ish)
 };
 
 // ---------------------------------------------------------------------------

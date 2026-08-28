@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { BallMode } from './Basketball.js';
 import { Shot } from './Shot.js';
 import { DRIBBLE, SHOT, BALL, HOOP, GRADE } from '../core/Constants.js';
-import { clamp, damp, planarDistance } from '../core/MathUtils.js';
+import { clamp, damp, planarDistance, angleDelta, smoothstep } from '../core/MathUtils.js';
 
 const State = {
   LOOSE: 'loose',
@@ -48,7 +48,22 @@ export class BallController {
     this.shotFlight = null; // { hoop, grade, kind, scored, timer }
     this.prevBallY = 0;
 
-    this._holdTuck = 0; // 0..1 airborne-hold blend
+    // Dribble handling state.
+    this.bodyYaw = 0; // damped facing the dribble is anchored to
+    this.handAnchor = new THREE.Vector3(); // smoothed horizontal ball anchor
+    this._airborneTime = 0; // debounces the airborne palm so grounded flicker
+    this._holdTuck = 0; // 0..1 airborne-hold blend                is ignored
+    this._bounceFrac = 1; // 0 at floor contact, 1 at the top of the bounce
+    this._handReady = new THREE.Vector3(); // world-space "ready" hand point
+  }
+
+  /** Body-facing forward/right (from the damped dribble yaw, not the camera). */
+  _bodyBasis() {
+    const y = this.bodyYaw;
+    return {
+      fwd: new THREE.Vector3(-Math.sin(y), 0, -Math.cos(y)),
+      right: new THREE.Vector3(Math.cos(y), 0, -Math.sin(y)),
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -87,10 +102,15 @@ export class BallController {
     this.ball.setControlled();
     this.mode = State.CARRY;
     this.activeSign = 1;
-    this.phase = 0.0;
+    this.phase = 0.5; // start at floor contact so the first move is a push-down
     this.move = null;
     this.shotFlight = null;
     this.hud?.setShotMeter(null);
+    // Ease the ball in from wherever it was, facing where the player looks.
+    this.bodyYaw = this.cam.yaw;
+    this.handAnchor.copy(this.ball.position);
+    this._airborneTime = this.player.grounded ? 0 : 0.3;
+    this._holdTuck = this.player.grounded ? 0 : 1;
     this.audio?.bounce(0.6);
   }
 
@@ -128,8 +148,16 @@ export class BallController {
     // Dribble-move triggers.
     this._detectMoveTriggers(input, speed);
 
-    // Airborne while carrying → tuck/hold the ball (can't dribble in the air).
-    this._holdTuck = damp(this._holdTuck, grounded ? 0 : 1, 12, dt);
+    // Smoothly turn the body toward where the camera looks, so glancing around
+    // never whips the ball about you — it stays dribbling in front of your body.
+    this.bodyYaw += angleDelta(this.bodyYaw, this.cam.yaw) * (1 - Math.exp(-DRIBBLE.yawLambda * dt));
+
+    // Airborne while carrying → palm/hold the ball (you can't dribble in the
+    // air). Debounced so a one-frame grounded flicker never yanks it up.
+    if (grounded) this._airborneTime = 0;
+    else this._airborneTime += dt;
+    const airborne = this._airborneTime > 0.12;
+    this._holdTuck = damp(this._holdTuck, airborne ? 1 : 0, 14, dt);
 
     // Bounce tempo scales with speed.
     const targetHz = this.player.sprinting ? DRIBBLE.sprintBounceHz : DRIBBLE.baseBounceHz + speed * 0.16;
@@ -159,28 +187,28 @@ export class BallController {
   }
 
   _computeDribblePos(dt, speed) {
-    const fwd = this.cam.forward();
-    const right = this.cam.right();
+    const { fwd, right } = this._bodyBasis();
     const feet = this.player.position;
 
-    // Forward + lateral handling offsets.
-    let forwardOff = DRIBBLE.forward + clamp(speed * 0.05, 0, 0.35);
+    // Forward + lateral handling offsets. Drive the ball further out in front
+    // as you move so it reads as pushing the ball ahead, not glued to you.
+    let forwardOff = DRIBBLE.forward + clamp(speed * DRIBBLE.speedForward, 0, DRIBBLE.speedForwardMax);
     let sideOff = DRIBBLE.side * this.activeSign;
     let extraFwd = 0;
     let heightBias = 0;
 
-    // Apply an in-progress move by reshaping the lateral/forward path.
+    // Apply an in-progress move by reshaping the lateral/forward path. The ball
+    // dips low and crosses the body, and the handling hand switches mid-move.
     if (this.move && this.move.type !== 'hesitation') {
       const m = this.move;
       m.t += dt;
       const p = clamp(m.t / m.dur, 0, 1);
-      const ease = p * p * (3 - 2 * p);
+      const ease = smoothstep(p);
       sideOff = DRIBBLE.side * (m.fromSign + (m.toSign - m.fromSign) * ease);
       const cross = Math.sin(p * Math.PI); // peaks mid-move
-      if (m.type === 'crossover') heightBias = -cross * 0.28;
-      if (m.type === 'between') { extraFwd = cross * 0.28; heightBias = -cross * 0.42; }
-      if (m.type === 'behind') { extraFwd = -cross * 0.5; heightBias = -cross * 0.15; }
-      // Switch the active hand at the midpoint.
+      if (m.type === 'crossover') heightBias = -cross * 0.22;
+      if (m.type === 'between') { extraFwd = cross * 0.26; heightBias = -cross * 0.4; }
+      if (m.type === 'behind') { extraFwd = -cross * 0.5; heightBias = -cross * 0.12; }
       if (p >= 0.5 && this.activeSign === m.fromSign) {
         this.activeSign = m.toSign;
         this.audio?.squeak();
@@ -189,22 +217,30 @@ export class BallController {
     }
 
     // Lead the ball in the movement direction a touch.
-    const lead = this.player.moveDir.clone().multiplyScalar(clamp(speed * 0.06, 0, 0.4));
+    const lead = this.player.moveDir.clone().multiplyScalar(clamp(speed * 0.07, 0, 0.5));
 
+    // Target horizontal anchor, then damp toward it for a weighty, non-snappy
+    // handle. Vertical bounce stays crisp (below), so only XZ is smoothed.
+    const targetX = feet.x + fwd.x * (forwardOff + extraFwd) + right.x * sideOff + lead.x;
+    const targetZ = feet.z + fwd.z * (forwardOff + extraFwd) + right.z * sideOff + lead.z;
+    this.handAnchor.x = damp(this.handAnchor.x, targetX, DRIBBLE.followLambda, dt);
+    this.handAnchor.z = damp(this.handAnchor.z, targetZ, DRIBBLE.followLambda, dt);
+
+    // Gravity-shaped bounce: quadratic, floor at phase 0.5, top at phase 0 & 1.
     const floor = DRIBBLE.floorClearance;
     const top = DRIBBLE.handHeight;
-    // Gravity-shaped bounce: quadratic, floor at phase 0.5, hand at 0 and 1.
     const q = 2 * this.phase - 1;
-    let h = floor + (top - floor) * q * q + heightBias;
-    // Airborne hold raises + tucks the ball to the hands.
-    const holdH = this.player.eyePosition.y - feet.y - 0.35;
-    h = h * (1 - this._holdTuck) + holdH * this._holdTuck;
+    this._bounceFrac = q * q; // 1 at the top, 0 at the floor — drives the hand
+    let h = floor + (top - floor) * this._bounceFrac + heightBias;
 
-    this.ballTarget.set(
-      feet.x + fwd.x * (forwardOff + extraFwd) + right.x * sideOff + lead.x,
-      feet.y + h,
-      feet.z + fwd.z * (forwardOff + extraFwd) + right.z * sideOff + lead.z
-    );
+    // Airborne: palm the ball at chest height (rises with the jump via feet.y),
+    // never up in the face.
+    h = h * (1 - this._holdTuck) + DRIBBLE.holdHeight * this._holdTuck;
+
+    this.ballTarget.set(this.handAnchor.x, feet.y + h, this.handAnchor.z);
+
+    // Remember a hip-level "ready" point for the handling hand to return to.
+    this._handReady.set(this.handAnchor.x, feet.y + top * 0.96, this.handAnchor.z);
   }
 
   _detectMoveTriggers(input, speed) {
@@ -501,11 +537,22 @@ export class BallController {
     const offSide = this.activeSign > 0 ? 'left' : 'right';
 
     if (this.mode === State.CARRY) {
-      // Active hand sits on top of the ball; off hand rests/guards.
+      // The handling hand pushes down onto the ball near the top of the bounce
+      // and recovers to a hip-level "ready" pose as the ball drops — it does not
+      // chase the ball all the way to the floor.
       const onTop = ballLocal.clone();
-      onTop.y += BALL.radius * 0.65;
-      this.hands.setTarget(activeSide, onTop, new THREE.Euler(-1.2, 0, this.activeSign * 0.2));
-      this.hands.toRest(offSide);
+      onTop.y += BALL.radius * 0.72;
+      const ready = cam.worldToLocal(this._handReady.clone());
+      // Bias toward the ball only in the upper half of the bounce.
+      const follow = smoothstep(clamp(this._bounceFrac * 1.35, 0, 1)) * (1 - this._holdTuck);
+      const target = ready.clone().lerp(onTop, follow);
+      const push = -1.1 - follow * 0.5; // palm tips down as it presses the ball
+      this.hands.setTarget(activeSide, target, new THREE.Euler(push, 0, this.activeSign * 0.25));
+
+      // Off hand guards loosely out in front rather than sitting idle.
+      const g = this.hands.rest[offSide].pos.clone();
+      g.z -= 0.06;
+      this.hands.setTarget(offSide, g, this.hands.rest[offSide].rot);
     } else {
       // Shooting / layup / dunk: both hands cup the ball.
       const cup = ballLocal.clone();
