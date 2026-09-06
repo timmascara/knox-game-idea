@@ -19,6 +19,11 @@ npm run dev
 Open the printed URL, click **Step on the court**, and click again to capture
 the mouse. Walk into the ball to pick it up.
 
+The repo also ships a GitHub Pages workflow (`.github/workflows/pages.yml`).
+Enable it once under **Settings → Pages → Source: GitHub Actions** and every
+push deploys a playable build to `https://<owner>.github.io/<repo>/` — a full
+page, so mouse capture works there (embedded previews often refuse it).
+
 ### Controls
 
 | Input | Action |
@@ -94,12 +99,18 @@ scripts/        smoke.mjs (headless test) · capture.mjs (contact sheets of any 
 
 ### The hands and the ball
 
-- **Hands** are built procedurally: a beveled palm outline, four fingers with
-  three joints each, a thumb with a swinging metacarpal, knuckles, a wrist
-  stump under a sweatband. Poses are four scalars (per-finger curl, spread,
-  thumb curl, thumb abduction) that damp toward named poses (`relaxed`,
-  `open`, `ball`, `grip`, `guard`). They live in world space, attached to the
-  body — turning your head never drags them with it.
+- **Hands** are a sculpted hand mesh (`src/assets/hand_right.glb`, ~100k
+  triangles, forearm cut under a sweatband) that arrived unrigged.
+  `scripts/rig_hand.py` rigs it from the geometry alone: it traces the four
+  fingers through cross-sections, places knuckle / middle / tip joints by
+  arc length, finds the thumb lobe, skins every vertex to the nearest bone
+  with a blend across each joint, and writes a skinned GLB whose joint
+  frames put -Z down the bone and +Y toward the back of the hand. In the
+  game, poses are four scalars (per-finger curl, spread, thumb curl, thumb
+  abduction) on top of the sculpt's relaxed pose, damped toward named
+  poses (`relaxed`, `open`, `ball`, `grip`, `guard`). The left hand is the
+  right hand mirrored. They live in world space, attached to the body —
+  turning your head never drags them with it.
 - **The ball**'s colour, bump and roughness maps are painted per texel from
   the real seam geometry: an equator, a meridian, and two side circles of
   55° angular radius, which is exactly what produces a basketball's eight
@@ -114,7 +125,12 @@ npm run build          # production bundle to dist/
 npm run preview        # serve the build on http://127.0.0.1:4173
 npm run test:smoke     # headless Chromium: boots, dribbles, checks invariants
 node scripts/capture.mjs all   # contact sheets of every move → screenshots/
+node scripts/capture.mjs poses # the rigged hand in every pose, close up
 ```
+
+To re-rig the hand from the source sculpt (e.g. after tweaking joint
+placement): `python3 scripts/rig_hand.py <hand.obj> src/assets/hand_right.glb`
+(needs `numpy`).
 
 The smoke test pumps the fixed-step loop through pickup, a pound rhythm,
 every move, sprinting, the low dribble, a buffered combo, and a drop and

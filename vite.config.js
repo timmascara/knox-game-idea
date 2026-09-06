@@ -13,7 +13,9 @@ export default defineConfig({
     target: 'es2022',
     sourcemap: true,
     outDir: 'dist',
-    chunkSizeWarningLimit: 2000,
+    chunkSizeWarningLimit: 4000,
+    // The rigged hand (~1.8 MB) is inlined so the single-file build works.
+    assetsInlineLimit: 4 * 1024 * 1024,
   },
   optimizeDeps: {
     exclude: ['@dimforge/rapier3d-compat'],

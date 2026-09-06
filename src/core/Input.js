@@ -53,6 +53,9 @@ export class Input {
     document.addEventListener('mousedown', (e) => {
       if (!this.locked && !this.allowUnlocked) return;
       if (e.target && e.target.closest && e.target.closest('.overlay, #tuning')) return;
+      // Playing unlocked: keep asking for the lock on every click — some
+      // hosts only grant it from a click directly on the canvas.
+      if (!this.locked && this.allowUnlocked && e.target === this.dom) this.requestLock();
       if (e.button === 0) {
         this.mouseDown.left = true;
         this.mousePressed.left = true;
@@ -88,7 +91,12 @@ export class Input {
   }
 
   requestLock() {
-    this.dom.requestPointerLock?.();
+    try {
+      const r = this.dom.requestPointerLock?.();
+      if (r && r.catch) r.catch(() => {});
+    } catch (e) {
+      /* host refused; the unlocked fallback takes over */
+    }
   }
 
   exitLock() {

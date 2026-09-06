@@ -26,7 +26,7 @@ const State = {
 };
 
 const PALM_GAP = 0.012; // palm surface sits this far off the ball
-const PALM_CENTER = new THREE.Vector3(0, -0.012, -0.056); // palm centre in hand space
+const PALM_CENTER = new THREE.Vector3(0, -0.021, -0.052); // palm surface centre in hand space
 const HOLD_POINT = new THREE.Vector3(0, 1.14, 0.40);
 const FOLLOW_THROUGH = 0.09; // seconds the hand keeps pushing after release
 const APPROACH = 0.13; // seconds before the catch the hand descends to meet the ball

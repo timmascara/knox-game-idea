@@ -17,9 +17,10 @@ import { clamp } from './MathUtils.js';
  * runs the fixed-order update loop, and mediates pause / settings / audio.
  */
 export class Game {
-  constructor(physics, settings) {
+  constructor(physics, settings, handAsset) {
     this.physics = physics;
     this.settings = settings;
+    this.handAsset = handAsset;
     this.paused = true;
     this.started = false;
     this._cooldowns = { court: 0, rim: 0, backboard: 0 };
@@ -66,7 +67,7 @@ export class Game {
     this.cameraRig.pitch = -0.28; // a natural slight downward gaze
     this.scene.add(this.cameraRig.yawObject);
 
-    this.hands = new Hands(this.scene);
+    this.hands = new Hands(this.scene, this.handAsset);
     this.ball = new Basketball(this.scene, this.physics, new THREE.Vector3(0.35, 0.3, 5.2));
 
     this.dribble = new DribbleController({
@@ -88,8 +89,13 @@ export class Game {
     this.input.sensitivity = this.settings.get('sensitivity');
     this.input.invertY = this.settings.get('invertY');
     this.input.onLockChange = (locked) => {
-      if (locked) this._resume();
-      else if (this.started) this._pause();
+      if (locked) {
+        this.input.allowUnlocked = false;
+        this.renderer.domElement.style.cursor = '';
+        this._resume();
+      } else if (this.started && !this.input.allowUnlocked) {
+        this._pause();
+      }
     };
   }
 
@@ -136,8 +142,9 @@ export class Game {
     setTimeout(() => {
       if (this.started && !this.input.locked && this.paused) {
         this.input.allowUnlocked = true;
+        this.renderer.domElement.style.cursor = 'none';
         this._resume();
-        this.hud.setHint('Mouse look without pointer lock · Esc pauses · walk into the ball');
+        this.hud.setHint('This window refuses mouse capture — click the court to retry · Esc pauses');
       }
     }, 600);
   }

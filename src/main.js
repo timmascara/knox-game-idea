@@ -1,6 +1,9 @@
 import { Physics } from './physics/Physics.js';
 import { Settings } from './state/Settings.js';
 import { Game } from './core/Game.js';
+import { loadHandAsset } from './player/HandAsset.js';
+import { HAND_POSES } from './player/HandModel.js';
+import * as THREE from 'three';
 
 /**
  * Boot sequence: initialise Rapier's WASM, build the game, and hand control to
@@ -20,14 +23,19 @@ async function boot() {
     setProgress(0.1, 'Warming up physics…');
     const physics = await Physics.init();
 
+    setProgress(0.3, 'Loading the hands…');
+    const handAsset = await loadHandAsset();
+
     setProgress(0.45, 'Building the court…');
     const settings = new Settings();
     // Yield a frame so the progress paint lands before the heavy world build.
     await new Promise((r) => requestAnimationFrame(r));
 
-    const game = new Game(physics, settings);
+    const game = new Game(physics, settings, handAsset);
     // Exposed for debugging / automated smoke tests.
     window.__game = game;
+    window.__THREE = THREE; // for the capture / rigging tools
+    window.__POSES = HAND_POSES;
     setProgress(0.9, 'Chalking the lines…');
 
     game.start();

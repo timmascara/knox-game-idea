@@ -135,6 +135,28 @@ const scenarios = {
     await page.evaluate(() => { window.__h.dribble(1); window.__h.look(-0.55); window.__h.tick(150); while (window.__game.dribble.state !== 'contact') window.__h.tick(1); window.__h.tick(6); });
     await shot('hero');
   },
+  async poses() {
+    // The right hand alone, in every named pose, from three angles.
+    const poses = ['relaxed', 'open', 'ball', 'grip'];
+    for (const pose of poses) {
+      await page.evaluate((pose) => {
+        const g = window.__game; const THREE = window.__THREE;
+        const h = g.hands.right;
+        g.ball.mesh.visible = false; g.hands.left.model.root.visible = false;
+        h.pos.set(0, 1.2, 4); h.quat.identity();
+        h.model.root.position.copy(h.pos); h.model.root.quaternion.identity();
+        h.model.setPose(window.__game.hands.constructor.POSES?.[pose] || window.__POSES[pose], true);
+        h.model.applyPose();
+        h.model.root.updateMatrixWorld(true);
+      }, pose);
+      const views = { back: [0.05, 1.5, 4.05], palm: [0.0, 0.9, 3.95], side: [-0.32, 1.22, 3.92], front: [0.0, 1.25, 3.62] };
+      for (const [vn, from] of Object.entries(views)) {
+        await page.evaluate(({ from }) => window.__h.closeup({ x: from[0], y: from[1], z: from[2] }, { x: 0, y: 1.2, z: 3.92 }, 42), { from });
+        await shot(`pose-${pose}-${vn}`);
+      }
+    }
+    await page.evaluate(() => { window.__h.freecam(); window.__game.ball.mesh.visible = true; window.__game.hands.left.model.root.visible = true; });
+  },
   async ballclose() {
     await page.evaluate(() => {
       const g = window.__game;

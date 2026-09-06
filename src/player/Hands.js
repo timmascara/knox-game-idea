@@ -16,8 +16,9 @@ const _y = new THREE.Vector3();
 const _z = new THREE.Vector3();
 
 export class Hands {
-  constructor(scene, skin = 0xc98f68) {
+  constructor(scene, asset, skin = 0xc98f68) {
     this.scene = scene;
+    this.asset = asset;
     this.left = this._make(+1, skin);
     this.right = this._make(-1, skin);
     scene.add(this.left.model.root);
@@ -25,7 +26,7 @@ export class Hands {
   }
 
   _make(thumbSign, skin) {
-    const model = new HandModel(thumbSign, skin);
+    const model = new HandModel(this.asset, thumbSign, skin);
     return {
       model,
       target: { pos: new THREE.Vector3(), quat: new THREE.Quaternion() },
