@@ -43,7 +43,7 @@ async function boot() {
     setTimeout(() => loading.classList.add('hidden'), 350);
   } catch (err) {
     console.error(err);
-    text.textContent = 'Something went wrong starting Home Court. Check the console.';
+    text.textContent = `Something went wrong starting Home Court: ${err?.message || err}`;
     fill.style.background = '#e0483a';
   }
 }
