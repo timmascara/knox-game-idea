@@ -162,5 +162,6 @@ body is nauseating, and needs a camera treatment of its own.
 - [Rapier](https://rapier.rs/) (`@dimforge/rapier3d-compat` `0.14`)
 - [Vite](https://vitejs.dev/) `5`
 
-MIT licensed. All geometry, textures and audio are generated in code — no
-third-party assets are bundled.
+MIT licensed for the code. The court, ball, textures and audio are generated
+in code; the hand mesh (`src/assets/hand_right.glb`) is a third-party sculpt
+supplied by the project owner under its own licence.
