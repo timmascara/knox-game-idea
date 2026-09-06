@@ -6,8 +6,8 @@ import { clamp } from '../core/MathUtils.js';
  * First-person player built on a Rapier kinematic capsule + character
  * controller (collide-and-slide, autostep, ground snap). Movement uses real
  * acceleration/deceleration so walking, running and sprinting feel distinct,
- * with a proper jump + gravity arc. The controller pushes dynamic bodies, so
- * bumping the ball nudges it.
+ * with gravity for the little step-back hop. The controller pushes dynamic
+ * bodies, so bumping the ball nudges it.
  */
 export class Player {
   constructor(physics, spawn = new THREE.Vector3(0, 0, 8)) {
@@ -46,6 +46,9 @@ export class Player {
     this.sprinting = false;
     this.moveDir = new THREE.Vector3(0, 0, 1);
     this.lastLandImpact = 0;
+    // Optional predicate: colliders the character controller must not be
+    // blocked by (the ball while it is in your hands).
+    this.ignoreCollider = null;
   }
 
   get position() {
@@ -85,10 +88,6 @@ export class Player {
     // Vertical
     if (this.grounded && this.vy <= 0) {
       this.vy = -1.0; // small stick to keep grounded on slopes/steps
-      if (input.wasPressed('Space')) {
-        this.vy = PLAYER.jumpSpeed;
-        this.grounded = false;
-      }
     } else {
       this.vy += PLAYER.gravity * dt;
       this.vy = Math.max(this.vy, -40);
@@ -101,7 +100,13 @@ export class Player {
       z: this.velocity.z * dt,
     };
 
-    this.controller.computeColliderMovement(this.collider, desired);
+    this.controller.computeColliderMovement(
+      this.collider,
+      desired,
+      undefined,
+      undefined,
+      this.ignoreCollider ? (c) => !this.ignoreCollider(c) : undefined
+    );
     const corrected = this.controller.computedMovement();
     this.wasGrounded = this.grounded;
     this.grounded = this.controller.computedGrounded();

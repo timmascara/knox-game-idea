@@ -2,17 +2,17 @@ import * as THREE from 'three';
 import { BALL, GROUP } from '../core/Constants.js';
 
 /**
- * The basketball. One persistent object for the whole session — it is never
- * deleted and recreated. It has two modes:
+ * The basketball. One persistent object for the whole session with two modes:
  *
- *   FREE       — a dynamic Rapier rigid body: falls, bounces, rolls, collides
- *                with court/rim/backboard/props. Used for loose balls, live
- *                shots and rebounds. Real physics.
- *   CONTROLLED — a kinematic body whose position is driven by the ball
- *                controller (pickup / dribble / shooting wind-up). The dribble
- *                bounce is computed from real gravity math so it still reads as
- *                a physical bounce, then it is handed back to FREE mode with a
- *                launch velocity when shot or dropped.
+ *   FREE       — a dynamic Rapier rigid body: falls, bounces, rolls, collides.
+ *   CONTROLLED — a kinematic body driven by the dribble controller. The
+ *                controller computes real ballistic bounces, so the ball still
+ *                *moves* like a ball; it just isn't at the mercy of the solver
+ *                while it is in your hands.
+ *
+ * The look is fully procedural: an equirectangular colour map painted from the
+ * true 8-panel seam geometry (an equator, a meridian, and two side circles),
+ * a pebble-grain bump map, and a matching roughness map.
  */
 export const BallMode = { FREE: 'free', CONTROLLED: 'controlled' };
 
@@ -37,6 +37,7 @@ export class Basketball {
         .setRestitution(BALL.restitution)
         .setFriction(BALL.friction)
         .setDensity(BALL.mass / ((4 / 3) * Math.PI * BALL.radius ** 3))
+        .setCollisionGroups((GROUP.BALL << 16) | (GROUP.WORLD | GROUP.PLAYER))
         .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Max)
         .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
       this.body
@@ -45,60 +46,120 @@ export class Basketball {
 
     this.mode = BallMode.FREE;
     this._pos = new THREE.Vector3().copy(spawn);
-    this._prevPos = this._pos.clone();
-    this.spinAxis = new THREE.Vector3(1, 0, 0);
+    this.mesh.position.copy(spawn);
   }
 
+  // ---------------------------------------------------------------------------
   _buildMesh() {
-    const geo = new THREE.SphereGeometry(BALL.radius, 32, 24);
-    const tex = this._texture();
+    const geo = new THREE.SphereGeometry(BALL.radius, 72, 54);
+    const maps = Basketball.buildMaps(1536, 768);
     const mat = new THREE.MeshStandardMaterial({
-      map: tex,
-      roughness: 0.72,
+      map: maps.color,
+      bumpMap: maps.bump,
+      bumpScale: 0.0022,
+      roughnessMap: maps.rough,
+      roughness: 1.0,
       metalness: 0.0,
     });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.castShadow = true;
+    mesh.receiveShadow = false;
     return mesh;
   }
 
-  _texture() {
-    const c = document.createElement('canvas');
-    c.width = 512; c.height = 256;
-    const ctx = c.getContext('2d');
-    // Base orange with subtle vertical shading.
-    const grad = ctx.createLinearGradient(0, 0, 0, 256);
-    grad.addColorStop(0, '#d9752e');
-    grad.addColorStop(0.5, '#e07f33');
-    grad.addColorStop(1, '#c96727');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 512, 256);
-    // pebble speckle
-    ctx.fillStyle = 'rgba(120,60,20,0.10)';
-    for (let i = 0; i < 2200; i++) {
-      ctx.fillRect(Math.random() * 512, Math.random() * 256, 1.3, 1.3);
+  /**
+   * Paint the colour / bump / roughness maps. Every texel is mapped back to a
+   * direction on the sphere and measured against the seam curves, so the
+   * grooves are geometrically exact rather than drawn by eye.
+   */
+  static buildMaps(W, H) {
+    const color = new Uint8ClampedArray(W * H * 4);
+    const bump = new Uint8ClampedArray(W * H * 4);
+    const rough = new Uint8ClampedArray(W * H * 4);
+
+    // Panel circle: angular radius of the two side circles (see class doc).
+    const THETA = (55 * Math.PI) / 180;
+    const GROOVE = 0.021; // angular half-width of a seam (≈2.5 mm on the ball)
+    const base = [0xd9, 0x73, 0x2d];
+    const seamCol = [0x1c, 0x14, 0x10];
+
+    // Hash-based value noise for the pebble grain (tileable in u).
+    const hash = (x, y) => {
+      let h = (x * 374761393 + y * 668265263) | 0;
+      h = ((h ^ (h >>> 13)) * 1274126177) | 0;
+      return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    };
+    const noise = (x, y, period) => {
+      const xi = Math.floor(x);
+      const yi = Math.floor(y);
+      const fx = x - xi;
+      const fy = y - yi;
+      const sx = fx * fx * (3 - 2 * fx);
+      const sy = fy * fy * (3 - 2 * fy);
+      const x0 = ((xi % period) + period) % period;
+      const x1 = (x0 + 1) % period;
+      const a = hash(x0, yi);
+      const b = hash(x1, yi);
+      const c = hash(x0, yi + 1);
+      const d = hash(x1, yi + 1);
+      return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+    };
+
+    for (let j = 0; j < H; j++) {
+      const v = (j + 0.5) / H;
+      const lat = (0.5 - v) * Math.PI;
+      const cl = Math.cos(lat);
+      const y = Math.sin(lat);
+      for (let i = 0; i < W; i++) {
+        const u = (i + 0.5) / W;
+        const lon = (u - 0.5) * Math.PI * 2;
+        const x = cl * Math.sin(lon);
+        // Seam distances (angular).
+        const dEq = Math.asin(Math.abs(y));
+        const dMer = Math.asin(Math.abs(x));
+        const dCirc = Math.abs(Math.acos(Math.min(1, Math.abs(x))) - THETA);
+        const d = Math.min(dEq, dMer, dCirc);
+        // 0 = on the seam, 1 = panel.
+        let seam = d / GROOVE;
+        seam = seam >= 1 ? 1 : seam * seam * (3 - 2 * seam);
+
+        // Pebble grain: sum of two octaves, stretched by 1/cos(lat) so the
+        // grain stays roughly isotropic away from the poles.
+        const px = (i / W) * 520;
+        const py = (j / H) * 260;
+        const st = Math.max(0.35, cl);
+        let n = noise(px / st, py, Math.round(520 / st)) * 0.65 + noise(px * 2.1 / st, py * 2.1, Math.round(1092 / st)) * 0.35;
+        // Sharpen into bumps.
+        n = Math.pow(n, 1.35);
+        const bumpV = seam * (0.55 + n * 0.45) + (1 - seam) * 0.15;
+
+        const k = (j * W + i) * 4;
+        const tint = 0.9 + n * 0.16;
+        color[k] = base[0] * tint * seam + seamCol[0] * (1 - seam);
+        color[k + 1] = base[1] * tint * seam + seamCol[1] * (1 - seam);
+        color[k + 2] = base[2] * tint * seam + seamCol[2] * (1 - seam);
+        color[k + 3] = 255;
+        const bv = bumpV * 255;
+        bump[k] = bump[k + 1] = bump[k + 2] = bv;
+        bump[k + 3] = 255;
+        const rv = (0.62 + (1 - n) * 0.2) * seam + 0.9 * (1 - seam);
+        rough[k] = rough[k + 1] = rough[k + 2] = rv * 255;
+        rough[k + 3] = 255;
+      }
     }
-    // Seams (black). UV sphere: horizontal line = equator, verticals = meridians.
-    ctx.strokeStyle = '#1c1410';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(0, 128); ctx.lineTo(512, 128); // equator
-    ctx.stroke();
-    for (const x of [128, 384]) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0); ctx.lineTo(x, 256);
-      ctx.stroke();
-    }
-    // Curved side seams
-    ctx.beginPath();
-    ctx.moveTo(0, 128);
-    ctx.bezierCurveTo(128, 40, 128, 216, 256, 128);
-    ctx.bezierCurveTo(384, 40, 384, 216, 512, 128);
-    ctx.stroke();
-    const tex = new THREE.CanvasTexture(c);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = 4;
-    return tex;
+
+    const mk = (data, srgb) => {
+      const t = new THREE.DataTexture(data, W, H, THREE.RGBAFormat);
+      t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+      t.wrapS = THREE.RepeatWrapping;
+      t.anisotropy = 8;
+      t.generateMipmaps = true;
+      t.minFilter = THREE.LinearMipmapLinearFilter;
+      t.magFilter = THREE.LinearFilter;
+      t.needsUpdate = true;
+      return t;
+    };
+    return { color: mk(color, true), bump: mk(bump, false), rough: mk(rough, false) };
   }
 
   // --- Mode control ----------------------------------------------------------
@@ -119,10 +180,13 @@ export class Basketball {
     this.mode = BallMode.FREE;
   }
 
-  /** In CONTROLLED mode, drive the ball to a world position this frame. */
-  driveTo(pos) {
+  /** In CONTROLLED mode, drive the ball to a world position + orientation. */
+  driveTo(pos, quat) {
     this.body.setNextKinematicTranslation({ x: pos.x, y: pos.y, z: pos.z });
+    if (quat) this.body.setNextKinematicRotation({ x: quat.x, y: quat.y, z: quat.z, w: quat.w });
     this._pos.copy(pos);
+    this.mesh.position.copy(pos);
+    if (quat) this.mesh.quaternion.copy(quat);
   }
 
   get position() {
@@ -142,15 +206,11 @@ export class Basketball {
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
   }
 
-  /**
-   * Extra rolling resistance while the ball is rolling on the ground. A perfect
-   * sphere on a plane would roll almost forever in the solver; this bleeds off
-   * horizontal speed so loose balls come to rest and can be chased down.
-   */
+  /** Rolling resistance so loose balls come to rest and can be chased down. */
   applyRollingResistance(dt) {
     if (this.mode !== BallMode.FREE) return;
     const t = this.body.translation();
-    if (t.y > BALL.radius + 0.06) return; // only near the ground
+    if (t.y > BALL.radius + 0.06) return;
     const v = this.body.linvel();
     const horiz = Math.hypot(v.x, v.z);
     if (horiz < 0.01) return;
@@ -158,17 +218,11 @@ export class Basketball {
     this.body.setLinvel({ x: v.x * decay, y: v.y, z: v.z * decay }, true);
   }
 
-  /** Sync the render mesh from physics (FREE) — spin is read from angvel. */
+  /** Sync the render mesh from physics (FREE mode). */
   syncMesh() {
     const t = this.body.translation();
     this.mesh.position.set(t.x, t.y, t.z);
     const r = this.body.rotation();
     this.mesh.quaternion.set(r.x, r.y, r.z, r.w);
-  }
-
-  /** In CONTROLLED mode we set mesh position directly and spin it manually. */
-  syncMeshControlled(pos, spinQuat) {
-    this.mesh.position.copy(pos);
-    if (spinQuat) this.mesh.quaternion.copy(spinQuat);
   }
 }

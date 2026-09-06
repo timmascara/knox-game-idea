@@ -23,7 +23,15 @@ export class CameraRig {
     this.bobT = 0;
     this.bobAmount = 0;
     this.landDip = 0;
-    this.baseEye = 1.66;
+    this.baseEye = 1.64;
+    this.sway = new THREE.Vector3();
+    this.roll = 0;
+  }
+
+  /** Body sway from the dribble: lateral (m, +right), vertical (m), roll (rad). */
+  setSway(lateral, vertical, roll) {
+    this.sway.set(lateral, vertical, 0);
+    this.roll = roll;
   }
 
   setFov(fov) {
@@ -63,17 +71,20 @@ export class CameraRig {
   /** Position the rig at the player's feet; eye height + bob handled here. */
   update(dt, feetPos, planarSpeed, grounded) {
     this.yawObject.position.set(feetPos.x, feetPos.y, feetPos.z);
+    this.yawObject.rotation.y = this.yaw;
+    this.pitchObject.rotation.x = this.pitch;
 
     // Head bob scales with speed while grounded.
     const targetBob = grounded ? clamp(planarSpeed / 7, 0, 1) : 0;
     this.bobAmount = damp(this.bobAmount, targetBob, 8, dt);
     this.bobT += dt * (6 + planarSpeed * 1.4);
-    const bobY = Math.sin(this.bobT * 2) * 0.035 * this.bobAmount;
-    const bobX = Math.cos(this.bobT) * 0.03 * this.bobAmount;
+    const bobY = Math.sin(this.bobT * 2) * 0.022 * this.bobAmount;
+    const bobX = Math.cos(this.bobT) * 0.018 * this.bobAmount;
 
     this.landDip = damp(this.landDip, 0, 10, dt);
 
-    this.pitchObject.position.set(bobX, this.baseEye + bobY - this.landDip, 0);
+    this.pitchObject.position.set(bobX + this.sway.x, this.baseEye + bobY - this.landDip + this.sway.y, 0);
+    this.camera.rotation.z = this.roll;
   }
 
   triggerLandDip(strength) {

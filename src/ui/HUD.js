@@ -1,95 +1,82 @@
 /**
- * The in-game heads-up display: crosshair, session stats, contextual hint, the
- * shot-timing meter, and the grade / make flashes. Pure DOM over the canvas so
- * it stays crisp and cheap. Everything is created here so index.html stays
- * minimal.
+ * Minimal heads-up display for the dribble lab: a crosshair, which hand has
+ * the ball, the move that just fired (and the chain it belongs to), a live
+ * tempo readout, and a contextual hint. Pure DOM over the canvas.
  */
 export class HUD {
-  constructor(gameState) {
-    this.gameState = gameState;
+  constructor() {
     this.root = document.createElement('div');
     this.root.id = 'hud';
     this.root.innerHTML = `
       <div class="crosshair"></div>
-      <div class="stats">
-        <div class="big"><span id="hud-makes">0</span>/<span id="hud-att">0</span>
-          <span style="opacity:.6;font-size:14px">(<span id="hud-pct">0</span>%)</span></div>
-        <div class="streak" id="hud-streak"></div>
+      <div class="hands">
+        <span class="hand" id="hud-left">L</span>
+        <span class="hand" id="hud-right">R</span>
       </div>
-      <div class="env-name" id="hud-env"></div>
-      <div class="shot-meter" id="hud-meter">
-        <div class="fill" id="hud-meter-fill"></div>
-        <div class="ideal" id="hud-meter-ideal"></div>
-      </div>
-      <div class="flash grade" id="hud-grade"></div>
-      <div class="flash make" id="hud-make"></div>
-      <div class="hint" id="hud-hint">Click to look around · E to pick up the ball</div>
+      <div class="tempo" id="hud-tempo"></div>
+      <div class="flash move" id="hud-move"></div>
+      <div class="combo" id="hud-combo"></div>
+      <div class="hint" id="hud-hint"></div>
     `;
     document.body.appendChild(this.root);
-
     this.el = {
-      makes: this.root.querySelector('#hud-makes'),
-      att: this.root.querySelector('#hud-att'),
-      pct: this.root.querySelector('#hud-pct'),
-      streak: this.root.querySelector('#hud-streak'),
-      env: this.root.querySelector('#hud-env'),
-      meter: this.root.querySelector('#hud-meter'),
-      meterFill: this.root.querySelector('#hud-meter-fill'),
-      meterIdeal: this.root.querySelector('#hud-meter-ideal'),
-      grade: this.root.querySelector('#hud-grade'),
-      make: this.root.querySelector('#hud-make'),
+      left: this.root.querySelector('#hud-left'),
+      right: this.root.querySelector('#hud-right'),
+      tempo: this.root.querySelector('#hud-tempo'),
+      move: this.root.querySelector('#hud-move'),
+      combo: this.root.querySelector('#hud-combo'),
       hint: this.root.querySelector('#hud-hint'),
     };
-
-    gameState.onChange((s) => this._refreshStats(s));
-    this._refreshStats(gameState);
-    this._hintTimer = 0;
+    this._lastCatch = 0;
+    this._catchTimes = [];
+    this._clock = 0;
+    this._moveTimer = 0;
+    this.hide();
   }
 
-  _refreshStats(s) {
-    this.el.makes.textContent = s.makes;
-    this.el.att.textContent = s.attempts;
-    this.el.pct.textContent = s.percentage;
-    this.el.streak.textContent = s.streak >= 2 ? `🔥 ${s.streak} in a row` : '';
-  }
-
-  setEnvName(name) {
-    this.el.env.textContent = name;
+  setHand(sign) {
+    this.el.left.classList.toggle('active', sign < 0);
+    this.el.right.classList.toggle('active', sign > 0);
   }
 
   setHint(text) {
-    this.el.hint.textContent = text;
-    this.el.hint.style.opacity = text ? '0.75' : '0';
+    this.el.hint.textContent = text || '';
+    this.el.hint.style.opacity = text ? '0.8' : '0';
   }
 
-  setShotMeter(data) {
-    if (!data) {
-      this.el.meter.style.display = 'none';
+  flashMove(label) {
+    const e = this.el.move;
+    e.textContent = label;
+    e.classList.remove('show');
+    void e.offsetWidth;
+    e.classList.add('show');
+    clearTimeout(this._moveTo);
+    this._moveTo = setTimeout(() => e.classList.remove('show'), 700);
+  }
+
+  setCombo(list) {
+    this.el.combo.textContent = list.length > 1 ? list.join('  →  ') : '';
+  }
+
+  update(dt, dribble, player) {
+    this._clock += dt;
+    if (dribble.lastEvent === 'catch') {
+      dribble.lastEvent = null;
+      this._catchTimes.push(this._clock);
+      if (this._catchTimes.length > 6) this._catchTimes.shift();
+    }
+    if (!dribble.dribbling) {
+      this.el.tempo.textContent = '';
+      this._catchTimes.length = 0;
+      this.el.left.classList.remove('active');
+      this.el.right.classList.remove('active');
       return;
     }
-    this.el.meter.style.display = 'block';
-    this.el.meterFill.style.height = `${Math.min(100, data.fill * 100)}%`;
-    // Position the ideal marker line.
-    this.el.meterIdeal.style.bottom = `${data.idealAt * 100}%`;
-  }
-
-  flashGrade(grade) {
-    const label = grade.toUpperCase();
-    const e = this.el.grade;
-    e.textContent = label;
-    e.className = `flash grade g-${grade} show`;
-    void e.offsetWidth; // restart animation
-    e.className = `flash grade g-${grade} show`;
-    setTimeout(() => (e.className = `flash grade g-${grade}`), 900);
-  }
-
-  flashMake(text) {
-    const e = this.el.make;
-    e.textContent = text;
-    e.className = 'flash make g-green show';
-    void e.offsetWidth;
-    e.className = 'flash make g-green show';
-    setTimeout(() => (e.className = 'flash make g-green'), 900);
+    if (this._catchTimes.length >= 2) {
+      const span = this._catchTimes[this._catchTimes.length - 1] - this._catchTimes[0];
+      const per = span / (this._catchTimes.length - 1);
+      if (per > 0) this.el.tempo.textContent = `${Math.round(60 / per)} bpm`;
+    }
   }
 
   show() { this.root.style.display = 'block'; }

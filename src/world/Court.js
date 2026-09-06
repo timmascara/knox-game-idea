@@ -25,7 +25,7 @@ export class Court {
 
   _build() {
     // --- Canvas markings -----------------------------------------------------
-    const border = 1.6; // apron beyond the boundary lines
+    const border = COURT.apron;
     const worldW = COURT.width + border * 2;
     const worldL = COURT.length + border * 2;
     const ppm = 48; // pixels per metre
@@ -87,9 +87,9 @@ export class Court {
 
     // Slight physical thickness slab for visual edge
     const edgeGeo = new THREE.BoxGeometry(worldW, 0.16, worldL);
-    const edgeMat = new THREE.MeshStandardMaterial({ color: 0x2f4650, roughness: 0.9 });
+    const edgeMat = new THREE.MeshStandardMaterial({ color: 0x3a3e44, roughness: 0.9 });
     const edge = new THREE.Mesh(edgeGeo, edgeMat);
-    edge.position.y = -0.06;
+    edge.position.y = -0.075; // top face 1.5 cm under the slab: no z-fighting
     edge.receiveShadow = true;
     this.group.add(edge);
   }
@@ -175,7 +175,7 @@ export class Court {
 
   _buildCollider() {
     const { RAPIER } = this.physics;
-    const border = 1.6;
+    const border = COURT.apron;
     const w = COURT.width + border * 2;
     const l = COURT.length + border * 2;
     const body = this.physics.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.06, 0));

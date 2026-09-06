@@ -5,7 +5,7 @@ import { Game } from './core/Game.js';
 /**
  * Boot sequence: initialise Rapier's WASM, build the game, and hand control to
  * the menu. A small loading overlay covers the async warm-up so the first frame
- * the player sees is already the park.
+ * the player sees is already the court.
  */
 async function boot() {
   const loading = document.getElementById('loading');
@@ -20,7 +20,7 @@ async function boot() {
     setProgress(0.1, 'Warming up physics…');
     const physics = await Physics.init();
 
-    setProgress(0.45, 'Building the park…');
+    setProgress(0.45, 'Building the court…');
     const settings = new Settings();
     // Yield a frame so the progress paint lands before the heavy world build.
     await new Promise((r) => requestAnimationFrame(r));

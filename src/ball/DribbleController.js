@@ -1,0 +1,696 @@
+import * as THREE from 'three';
+import { BallMode } from './Basketball.js';
+import { Flight, Contact, dirOf } from './BounceMath.js';
+import { MOVES, makeContext } from './Moves.js';
+import { HAND_POSES } from '../player/HandModel.js';
+import { DRIBBLE as D, BALL } from '../core/Constants.js';
+import { clamp, damp, angleDelta, smoothstep } from '../core/MathUtils.js';
+
+/**
+ * The dribble engine. Owns possession (loose / gather / hold / dribbling),
+ * runs the catch → carry → push → flight cycle from BounceMath, chooses moves
+ * from a small input buffer, and choreographs both hands and the camera's
+ * body sway around the ball every frame.
+ *
+ * Everything is planned in the *handle frame*: a body-relative space that
+ * trails the feet and the look direction with a little lag (so the ball has
+ * weight and a quick glance never whips it around). The frame's origin is on
+ * the court surface at the feet; x = right, y = up, z = forward.
+ */
+const State = {
+  LOOSE: 'loose',
+  GATHER: 'gather',
+  HOLD: 'hold',
+  CONTACT: 'contact',
+  FLIGHT: 'flight',
+};
+
+const PALM_GAP = 0.012; // palm surface sits this far off the ball
+const PALM_CENTER = new THREE.Vector3(0, -0.012, -0.056); // palm centre in hand space
+const HOLD_POINT = new THREE.Vector3(0, 1.14, 0.40);
+const FOLLOW_THROUGH = 0.09; // seconds the hand keeps pushing after release
+const APPROACH = 0.13; // seconds before the catch the hand descends to meet the ball
+
+const _v = new THREE.Vector3();
+const _v2 = new THREE.Vector3();
+const _v3 = new THREE.Vector3();
+const _h1 = new THREE.Vector3();
+const _h2 = new THREE.Vector3();
+const _h3 = new THREE.Vector3();
+const _q = new THREE.Quaternion();
+const UP = new THREE.Vector3(0, 1, 0);
+
+export class DribbleController {
+  constructor({ player, cameraRig, hands, ball, audio, hud }) {
+    this.player = player;
+    this.cam = cameraRig;
+    this.hands = hands;
+    this.ball = ball;
+    this.audio = audio;
+    this.hud = hud;
+
+    this.state = State.LOOSE;
+    this.sign = 1; // hand with the ball: +1 right, -1 left
+    this.t = 0; // time into the current segment
+    this.plan = null;
+    this.contact = null;
+    this.flight = null;
+    this.queue = [];
+    this.low = false;
+    this.cycles = 0;
+    this.combo = [];
+    this._comboTimer = 0;
+
+    this.frame = { pos: new THREE.Vector3(), yaw: 0 };
+    this._fwd = new THREE.Vector3(0, 0, -1);
+    this._right = new THREE.Vector3(1, 0, 0);
+
+    this.ballLocal = new THREE.Vector3();
+    this.ballVelLocal = new THREE.Vector3();
+    this.ballWorld = new THREE.Vector3();
+    this.ballQuat = new THREE.Quaternion();
+    this.angVel = new THREE.Vector3();
+
+    this.sway = { lateral: 0, vertical: 0, roll: 0 };
+    this._swayTarget = { lateral: 0, vertical: 0, roll: 0 };
+    this._idleT = 0;
+
+    // Per-hand scratch used by the choreography.
+    this._release = { pos: new THREE.Vector3(), dir: new THREE.Vector3(), vel: new THREE.Vector3() };
+    this.lastEvent = null; // for tests / HUD: 'bounce' | 'catch' | 'release'
+    this.stats = { bounces: 0, catches: 0, minBallY: Infinity, maxHandGap: 0 };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Frame helpers
+  // ---------------------------------------------------------------------------
+  _updateFrame(dt, snap = false) {
+    const feet = this.player.position;
+    // The frame's origin sits on the ground under the feet. Only grounded
+    // feet move it vertically, so a hop doesn't lift the bounce path.
+    if (snap) {
+      this.frame.pos.set(feet.x, this.player.grounded ? feet.y : this.frame.pos.y, feet.z);
+      this.frame.yaw = this.cam.yaw;
+    } else {
+      this.frame.pos.x = damp(this.frame.pos.x, feet.x, D.followLambda, dt);
+      this.frame.pos.z = damp(this.frame.pos.z, feet.z, D.followLambda, dt);
+      if (this.player.grounded) this.frame.pos.y = damp(this.frame.pos.y, feet.y, 20, dt);
+      this.frame.yaw += angleDelta(this.frame.yaw, this.cam.yaw) * (1 - Math.exp(-D.yawLambda * dt));
+    }
+    const y = this.frame.yaw;
+    this._fwd.set(-Math.sin(y), 0, -Math.cos(y));
+    this._right.set(Math.cos(y), 0, -Math.sin(y));
+  }
+
+  toWorld(local, out = new THREE.Vector3()) {
+    out.copy(this.frame.pos);
+    out.addScaledVector(this._right, local.x);
+    out.y += local.y;
+    out.addScaledVector(this._fwd, local.z);
+    return out;
+  }
+
+  dirToWorld(local, out = new THREE.Vector3()) {
+    out.set(0, local.y, 0);
+    out.addScaledVector(this._right, local.x);
+    out.addScaledVector(this._fwd, local.z);
+    return out;
+  }
+
+  toLocal(world, out = new THREE.Vector3()) {
+    _v.subVectors(world, this.frame.pos);
+    out.set(_v.dot(this._right), _v.y, _v.dot(this._fwd));
+    return out;
+  }
+
+  get hasBall() {
+    return this.state !== State.LOOSE;
+  }
+
+  get dribbling() {
+    return this.state === State.CONTACT || this.state === State.FLIGHT;
+  }
+
+  get floorLocal() {
+    return BALL.radius; // frame origin sits on the court surface
+  }
+
+  // ---------------------------------------------------------------------------
+  update(dt, input) {
+    this._updateFrame(dt);
+    this._handleInput(input);
+
+    switch (this.state) {
+      case State.LOOSE: this._updateLoose(dt); break;
+      case State.GATHER: this._updateGather(dt); break;
+      case State.HOLD: this._updateHold(dt); break;
+      case State.CONTACT: this._updateContact(dt); break;
+      case State.FLIGHT: this._updateFlight(dt); break;
+    }
+
+    if (this.state !== State.LOOSE) {
+      this.toWorld(this.ballLocal, this.ballWorld);
+      this._spin(dt);
+      this.ball.driveTo(this.ballWorld, this.ballQuat);
+      this.stats.minBallY = Math.min(this.stats.minBallY, this.ballWorld.y);
+    }
+
+    this._updateSway(dt);
+    this._updateHands(dt);
+    this._comboTimer = Math.max(0, this._comboTimer - dt);
+    if (this._comboTimer === 0 && this.combo.length) {
+      this.combo = [];
+      this.hud?.setCombo(this.combo);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Input → intent
+  // ---------------------------------------------------------------------------
+  _handleInput(input) {
+    if (!input) return;
+    this.low = input.isDown('KeyC');
+
+    if (this.state === State.LOOSE) {
+      if (input.wasPressed('KeyE')) this._tryPickup(2.0, 4.5);
+      return;
+    }
+    if (this.state === State.GATHER) return;
+
+    if (input.wasPressed('KeyG')) {
+      this._drop();
+      return;
+    }
+
+    if (this.state === State.HOLD) {
+      if (input.mousePressed?.left) this._startDribble(1);
+      else if (input.mousePressed?.right) this._startDribble(-1);
+      else if (input.wasPressed('KeyE')) this._startDribble(this.sign);
+      return;
+    }
+
+    // Dribbling.
+    if (input.wasPressed('KeyE')) {
+      this._pickUpFromDribble();
+      return;
+    }
+    let move = null;
+    if (input.mousePressed?.left) move = input.isDown('KeyS') ? 'stepback' : 'crossover';
+    else if (input.mousePressed?.right) move = 'between';
+    else if (input.wasPressed('KeyQ')) move = 'behind';
+    else if (input.wasPressed('KeyF')) move = 'inout';
+    else if (input.wasPressed('Space')) move = 'hesitation';
+    if (move) this.queueMove(move);
+  }
+
+  /** Buffer a move; it starts at the next catch (or now, mid-pound). */
+  queueMove(name) {
+    if (!MOVES[name]) return;
+    if (this.queue.length >= 2) this.queue.shift();
+    this.queue.push(name);
+    // A pound can be interrupted early in its contact for responsiveness.
+    if (this.state === State.CONTACT && this.plan?.interruptible && this.t < this.contact.T * 0.55) {
+      this._replanFromCurrent();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // LOOSE / GATHER / HOLD
+  // ---------------------------------------------------------------------------
+  _updateLoose(dt) {
+    this._pickupCooldown = Math.max(0, (this._pickupCooldown || 0) - dt);
+    if (this._pickupCooldown > 0) return;
+    this._tryPickup(1.15, 3.2, true);
+  }
+
+  _tryPickup(range, maxSpeed, auto = false) {
+    const bpos = this.ball.position;
+    const feet = this.player.position;
+    const dx = bpos.x - feet.x;
+    const dz = bpos.z - feet.z;
+    const dist = Math.hypot(dx, dz);
+    const speed = this.ball.velocity.length();
+    if (dist > range || speed > maxSpeed || bpos.y > 1.5) return false;
+    // Only auto-gather a ball roughly in front of you.
+    if (auto) {
+      const facing = (dx * this._fwd.x + dz * this._fwd.z) / Math.max(dist, 1e-3);
+      if (facing < 0.1 && dist > 0.5) return false;
+    }
+    this._beginGather();
+    return true;
+  }
+
+  _beginGather() {
+    const wv = this.ball.velocity;
+    const pv = this.player.velocity;
+    this._updateFrame(0, true);
+    this.ball.setControlled();
+    const p0 = this.toLocal(this.ball.position);
+    const v0 = new THREE.Vector3(wv.x - pv.x, wv.y, wv.z - pv.z);
+    const vl = new THREE.Vector3(v0.dot(this._right), v0.y, v0.dot(this._fwd));
+    this.sign = p0.x >= 0 ? 1 : -1;
+    const T = clamp(0.22 + p0.distanceTo(HOLD_POINT) * 0.18, 0.25, 0.5);
+    this.contact = new Contact([
+      { p: p0, v: vl, t: 0, dir: dirOf(this.sign * 0.5, 0.85, 0.1) },
+      { p: HOLD_POINT.clone(), v: new THREE.Vector3(), t: T, dir: dirOf(this.sign * 0.9, -0.15, -0.3) },
+    ]);
+    this.t = 0;
+    this.state = State.GATHER;
+    this.plan = null;
+    this.flight = null;
+    this.angVel.set(0, 0, 0);
+    // Drive from the real ball state this very tick (no stale frame).
+    this.ballLocal.copy(p0);
+    this.ballVelLocal.copy(vl);
+    this.hud?.setHint('Left click: dribble right · Right click: dribble left · G: drop');
+  }
+
+  _updateGather(dt) {
+    this.t += dt;
+    this.contact.positionAt(this.t, this.ballLocal);
+    this.contact.velocityAt(this.t, this.ballVelLocal);
+    // A fast incoming ball can make the scoop path dip; never through the court.
+    this.ballLocal.y = Math.max(this.ballLocal.y, this.floorLocal);
+    if (this.t >= this.contact.T) {
+      this.state = State.HOLD;
+      this.t = 0;
+      this.ballLocal.copy(HOLD_POINT);
+      this.ballVelLocal.set(0, 0, 0);
+      this.audio?.catchBall(0.5);
+    }
+  }
+
+  _updateHold(dt) {
+    this.t += dt;
+    // A slow breathing drift so the held ball never looks frozen.
+    this.ballLocal.set(
+      HOLD_POINT.x + Math.sin(this.t * 1.1) * 0.006,
+      HOLD_POINT.y + Math.sin(this.t * 1.7) * 0.008,
+      HOLD_POINT.z + Math.cos(this.t * 0.9) * 0.005
+    );
+    this.ballVelLocal.set(0, 0, 0);
+  }
+
+  _pickUpFromDribble() {
+    const p0 = this.ballLocal.clone();
+    const v0 = this.ballVelLocal.clone();
+    this.contact = new Contact([
+      { p: p0, v: v0, t: 0, dir: dirOf(this.sign * 0.5, 0.85, 0.1) },
+      { p: HOLD_POINT.clone(), v: new THREE.Vector3(), t: 0.3, dir: dirOf(this.sign * 0.9, -0.15, -0.3) },
+    ]);
+    this.t = 0;
+    this.state = State.GATHER;
+    this.plan = null;
+    this.flight = null;
+    this.queue.length = 0;
+    this.hud?.setHint('Left click: dribble right · Right click: dribble left · G: drop');
+  }
+
+  _drop() {
+    // Hand the ball to the solver with its current world velocity so it just
+    // keeps doing what it was doing.
+    const vl = this.ballVelLocal;
+    const wv = this.dirToWorld(vl);
+    wv.x += this.player.velocity.x;
+    wv.z += this.player.velocity.z;
+    this.ball.setFree(wv, this.angVel);
+    this.state = State.LOOSE;
+    this._pickupCooldown = 0.6;
+    this.plan = null;
+    this.flight = null;
+    this.contact = null;
+    this.queue.length = 0;
+    this.hud?.setHint('Walk into the ball to pick it up · E to grab');
+  }
+
+  // ---------------------------------------------------------------------------
+  // DRIBBLING: plan a cycle (contact + flight)
+  // ---------------------------------------------------------------------------
+  _context(catchPos, inVel, sign) {
+    return makeContext({
+      sign,
+      speed: this.player.planarSpeed,
+      sprint: this.player.sprinting,
+      low: this.low,
+      catchPos,
+      inVel,
+    });
+  }
+
+  _flightOpts() {
+    return {
+      floor: this.floorLocal,
+      restitution: D.restitution,
+      horizontalKeep: D.horizontalKeep,
+      catchRiseSpeed: D.catchRiseSpeed,
+    };
+  }
+
+  /** Build the contact + flight for `name` from the given catch state. */
+  _plan(name, catchPos, inVel, sign, timeScale = 1) {
+    const ctx = this._context(catchPos, inVel, sign);
+    const plan = MOVES[name](ctx);
+    const wps = plan.waypoints;
+    wps[0].p = catchPos.clone();
+    wps[0].v = inVel.clone();
+    if (timeScale !== 1) for (const w of wps) w.t *= timeScale;
+    const last = wps[wps.length - 1];
+    // Keep every waypoint off the floor.
+    for (const w of wps) w.p.y = Math.max(w.p.y, this.floorLocal + 0.06);
+    const flight = new Flight(last.p, plan.target, this._flightOpts());
+    last.v = flight.releaseVelocity();
+    plan.contact = new Contact(wps);
+    plan.flight = flight;
+    return plan;
+  }
+
+  _startDribble(sign) {
+    this.sign = sign;
+    const p0 = this.ballLocal.clone();
+    const plan = this._plan('pound', p0, new THREE.Vector3(0, -0.3, 0), sign, 1.8);
+    plan.label = null;
+    this._beginPlan(plan);
+    this.hud?.setHint(null);
+  }
+
+  _beginPlan(plan) {
+    this.plan = plan;
+    this.contact = plan.contact;
+    this.flight = plan.flight;
+    this.t = 0;
+    this.state = State.CONTACT;
+    this.sign = plan.hand;
+    this.hud?.setHand(this.sign);
+    if (plan.label) {
+      this.combo.push(plan.label);
+      if (this.combo.length > 4) this.combo.shift();
+      this._comboTimer = 1.6;
+      this.hud?.flashMove(plan.label);
+      this.hud?.setCombo(this.combo);
+    }
+    if (plan.squeak && this.player.planarSpeed > 0.8) this.audio?.squeak();
+    if (plan.hop) {
+      this.player.velocity.addScaledVector(this._fwd, -2.8);
+      this.player.vy = 1.5;
+      this.player.grounded = false;
+    }
+    this._swayFor(plan);
+  }
+
+  _nextPlanName() {
+    return this.queue.length ? this.queue.shift() : 'pound';
+  }
+
+  _replanFromCurrent() {
+    const name = this._nextPlanName();
+    const plan = this._plan(name, this.ballLocal.clone(), this.ballVelLocal.clone(), this.sign);
+    this._beginPlan(plan);
+  }
+
+  // ---------------------------------------------------------------------------
+  _updateContact(dt) {
+    this.t += dt;
+    const c = this.contact;
+    if (this.t >= c.T) {
+      // Release.
+      c.positionAt(c.T, this.ballLocal);
+      c.velocityAt(c.T, this.ballVelLocal);
+      this._release.pos.copy(this.ballLocal);
+      c.dirAt(c.T, this._release.dir);
+      this._release.vel.copy(this.ballVelLocal);
+      this.t -= c.T;
+      this.state = State.FLIGHT;
+      this.lastEvent = 'release';
+      this.flight.bounced = false;
+      this._updateFlight(0);
+      return;
+    }
+    c.positionAt(this.t, this.ballLocal);
+    c.velocityAt(this.t, this.ballVelLocal);
+  }
+
+  _updateFlight(dt) {
+    this.t += dt;
+    const f = this.flight;
+    if (!f.bounced && this.t >= f.t1) {
+      f.bounced = true;
+      this.lastEvent = 'bounce';
+      this.stats.bounces++;
+      this.audio?.bounce(clamp(f.vf * 0.2, 0.35, 1.4));
+      this._swayTarget.vertical -= clamp(f.vf * 0.004, 0, 0.02);
+    }
+    if (this.t >= f.T) {
+      // Catch → plan the next cycle from the actual arrival state.
+      f.positionAt(f.T, this.ballLocal);
+      f.catchVelocity(this.ballVelLocal);
+      this.stats.catches++;
+      this.cycles++;
+      this.lastEvent = 'catch';
+      this.audio?.catchBall(clamp(f.catchRise * 0.3, 0.1, 0.5));
+      const name = this._nextPlanName();
+      const plan = this._plan(name, this.ballLocal.clone(), this.ballVelLocal.clone(), this.plan.catchHand);
+      // The hand is wherever the previous flight asked it to be: start the new
+      // contact from that direction so the palm never jumps around the ball.
+      plan.waypoints[0].dir.copy(this.plan.catchDir);
+      this._beginPlan(plan);
+      return;
+    }
+    f.positionAt(this.t, this.ballLocal);
+    f.velocityAt(this.t, this.ballVelLocal);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Ball spin: rolls with its horizontal motion in flight, settles in hand.
+  // ---------------------------------------------------------------------------
+  _spin(dt) {
+    if (this.state === State.FLIGHT) {
+      const vh = this.dirToWorld(_v.set(this.ballVelLocal.x, 0, this.ballVelLocal.z), _v2);
+      const speed = vh.length();
+      if (speed > 0.05) {
+        _v3.crossVectors(UP, vh).normalize().multiplyScalar((speed / BALL.radius) * 0.35 + 2.5);
+        this.angVel.lerp(_v3, 1 - Math.exp(-14 * dt));
+      }
+    } else if (this.state === State.CONTACT) {
+      this.angVel.multiplyScalar(Math.exp(-6 * dt));
+    } else {
+      this.angVel.multiplyScalar(Math.exp(-4 * dt));
+    }
+    const w = this.angVel.length();
+    if (w > 1e-4) {
+      _q.setFromAxisAngle(_v.copy(this.angVel).divideScalar(w), w * dt);
+      this.ballQuat.premultiply(_q).normalize();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Camera body sway
+  // ---------------------------------------------------------------------------
+  _swayFor(plan) {
+    this._swayPlan = plan.sway || { lateral: 0, vertical: 0, roll: 0 };
+  }
+
+  _updateSway(dt) {
+    const tgt = this._swayTarget;
+    let lat = 0;
+    let ver = 0;
+    let roll = 0;
+    if (this.plan && this._swayPlan && (this.state === State.CONTACT || this.state === State.FLIGHT)) {
+      const s = this._swayPlan;
+      let k;
+      if (this.state === State.CONTACT) {
+        const u = clamp(this.t / this.contact.T, 0, 1);
+        if (s.rebound) k = Math.sin(u * Math.PI); // in, then back out
+        else if (s.hold) k = smoothstep(clamp(u * 2.2, 0, 1)) * (1 - smoothstep(clamp((u - 0.7) / 0.3, 0, 1)));
+        else k = smoothstep(u);
+      } else {
+        const u = clamp(this.t / this.flight.T, 0, 1);
+        k = s.rebound || s.hold ? 0 : 1 - smoothstep(clamp(u * 1.6, 0, 1));
+      }
+      lat = s.lateral * D.swayLateral * k;
+      ver = s.vertical * D.swayVertical * k;
+      roll = s.roll * D.swayRoll * k;
+    }
+    // Vertical target also carries the little bounce dip added on floor hits.
+    tgt.lateral = lat;
+    tgt.vertical = damp(tgt.vertical, ver, 18, dt);
+    tgt.roll = roll;
+    this.sway.lateral = damp(this.sway.lateral, tgt.lateral, 12, dt);
+    this.sway.vertical = damp(this.sway.vertical, tgt.vertical, 12, dt);
+    this.sway.roll = damp(this.sway.roll, tgt.roll, 10, dt);
+    this.cam.setSway(this.sway.lateral, this.sway.vertical, this.sway.roll);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Hands
+  // ---------------------------------------------------------------------------
+  _side(sign) {
+    return sign > 0 ? 'right' : 'left';
+  }
+
+  /** Finger direction: along the ball's surface, as forward-and-down as possible. */
+  _fingerDir(dirW, out) {
+    out.copy(this._fwd).multiplyScalar(0.8).addScaledVector(UP, -0.55);
+    out.addScaledVector(dirW, -out.dot(dirW));
+    if (out.lengthSq() < 1e-4) out.copy(this._fwd);
+    return out.normalize();
+  }
+
+  /** Place a hand so its palm rests on the ball at world contact direction dirW. */
+  _handOnBall(side, ballW, dirW, lambda, pose, rotLambda = lambda) {
+    const contact = _h1.copy(ballW).addScaledVector(dirW, BALL.radius + PALM_GAP);
+    const fingers = this._fingerDir(dirW, _h3);
+    const palm = _h2.copy(dirW).multiplyScalar(-1);
+    const q = this.hands.get(side).target.quat;
+    const quat = HandsQuat(palm, fingers, q);
+    const wrist = contact.clone().sub(PALM_CENTER.clone().applyQuaternion(quat));
+    this.hands.setTargetQuat(side, wrist, quat, lambda, rotLambda);
+    this.hands.setPose(side, pose);
+    return wrist;
+  }
+
+  _handGuard(side, sign, lambda = 14) {
+    const local = _v.set(sign * 0.40, 0.96 + this.sway.vertical * 0.5, 0.46);
+    local.x -= this.sway.lateral * 0.6; // counterbalance the body
+    const pos = this.toWorld(local);
+    const palm = this.dirToWorld(_v2.set(-sign * 0.35, -0.75, 0.55)).normalize();
+    const fingers = this.dirToWorld(_v3.set(sign * 0.3, -0.2, 0.92)).normalize();
+    this.hands.setTarget(side, pos, palm, fingers, lambda, lambda);
+    this.hands.setPose(side, HAND_POSES.guard);
+  }
+
+  _handRest(side, sign, t) {
+    const local = _v.set(sign * 0.25, 0.86 + Math.sin(t * 1.3 + sign) * 0.008, 0.20);
+    const pos = this.toWorld(local);
+    const palm = this.dirToWorld(_v2.set(-sign * 0.85, -0.2, 0.3)).normalize();
+    const fingers = this.dirToWorld(_v3.set(0, -0.5, 0.85)).normalize();
+    this.hands.setTarget(side, pos, palm, fingers, 10, 10);
+    this.hands.setPose(side, HAND_POSES.relaxed);
+  }
+
+  _updateHands(dt) {
+    this._idleT += dt;
+    const ballW = this.ballWorld;
+
+    if (this.state === State.LOOSE) {
+      this._handRest('right', 1, this._idleT);
+      this._handRest('left', -1, this._idleT);
+      return;
+    }
+
+    if (this.state === State.HOLD || this.state === State.GATHER) {
+      // Both hands on the sides of the ball, slightly behind it.
+      const k = this.state === State.GATHER ? clamp(this.t / this.contact.T, 0, 1) : 1;
+      for (const sign of [1, -1]) {
+        const side = this._side(sign);
+        const dirW = this.dirToWorld(_v.set(sign * 0.92, -0.18, -0.28)).normalize();
+        if (this.state === State.GATHER && sign !== this.sign && k < 0.5) {
+          this._handGuard(side, sign, 16);
+        } else {
+          this._handOnBall(side, ballW, dirW, 30 + k * 30, HAND_POSES.grip);
+        }
+      }
+      return;
+    }
+
+    // Dribbling.
+    const plan = this.plan;
+    const carrySide = this._side(plan.hand);
+    const catchSide = this._side(plan.catchHand);
+    const offSign = -plan.hand;
+
+    if (this.state === State.CONTACT) {
+      const dirW = this.dirToWorld(this.contact.dirAt(this.t, _v));
+      this._handOnBall(carrySide, ballW, dirW, 240, HAND_POSES.ball, 60);
+      if (plan.catchHand !== plan.hand) {
+        // The receiving hand gets ready above where the ball will arrive.
+        this._handReady(catchSide, plan, 1.0);
+      } else {
+        this._handGuard(this._side(offSign), offSign);
+      }
+      return;
+    }
+
+    // FLIGHT
+    const f = this.flight;
+    const remaining = f.T - this.t;
+    // 1) Follow-through for the hand that just released.
+    if (this.t < FOLLOW_THROUGH || plan.catchHand !== plan.hand) {
+      const ft = clamp(this.t / FOLLOW_THROUGH, 0, 1);
+      const relW = this.toWorld(this._release.pos);
+      const dirW = this.dirToWorld(this._release.dir).normalize();
+      const velW = this.dirToWorld(this._release.vel);
+      const ease = 1 - (1 - ft) * (1 - ft);
+      const p = relW.addScaledVector(velW, ease * FOLLOW_THROUGH * 0.85);
+      if (this.t < FOLLOW_THROUGH) {
+        this._handOnBall(carrySide, p, dirW, 40, HAND_POSES.open);
+      } else {
+        this._handGuard(carrySide, plan.hand, 12);
+      }
+    }
+    // 2) The catching hand: hover above the arrival point, then descend to meet
+    //    the rising ball so the catch is exact.
+    if (remaining > APPROACH) {
+      if (plan.catchHand === plan.hand && this.t < FOLLOW_THROUGH) {
+        // still following through (handled above)
+      } else {
+        this._handReady(catchSide, plan, 1.0);
+      }
+    } else {
+      const u = 1 - clamp(remaining / APPROACH, 0, 1);
+      this._handMeet(catchSide, plan, u);
+    }
+    if (plan.catchHand === plan.hand) {
+      this._handGuard(this._side(offSign), offSign);
+    }
+  }
+
+  /**
+   * The free hand between release and catch: it follows the ball down for the
+   * first part of the flight (a real hand travels about half the ball's
+   * amplitude), then rises ahead of it to hover just above the catch point.
+   */
+  _handReady(side, plan, lambda) {
+    const f = this.flight || plan.flight;
+    const targetW = this.toWorld(f.B, _v2);
+    const dirW = this.dirToWorld(plan.catchDir, _v3).normalize();
+    const hoverY = targetW.y + 0.09;
+    let u = this.flight ? clamp(this.t / f.T, 0, 1) : 0;
+    // Follow: just above the ball, but never lower than ~45 cm under the catch.
+    const followY = Math.max(this.ballWorld.y + BALL.radius + 0.05, targetW.y - 0.38);
+    const k = smoothstep(clamp((u - 0.15) / 0.6, 0, 1));
+    const p = _v.copy(this.ballWorld).lerp(targetW, k);
+    p.y = followY + (hoverY - followY) * k;
+    this._handOnBall(side, p, dirW, 18 * lambda, HAND_POSES.open, 16);
+  }
+
+  /** Blend from the hover down onto the ball as it arrives (u 0→1). */
+  _handMeet(side, plan, u) {
+    const f = this.flight;
+    const targetW = this.toWorld(f.B, _v2);
+    const dirW = this.dirToWorld(plan.catchDir, _v3).normalize();
+    const k = smoothstep(u);
+    // Track the actual ball horizontally, ease vertically from the hover.
+    const p = _v.copy(this.ballWorld).lerp(targetW, 1 - k);
+    p.y = targetW.y + 0.09 * (1 - k) + (this.ballWorld.y - targetW.y) * k;
+    this._handOnBall(side, p, dirW, 30 + k * 40, k > 0.6 ? HAND_POSES.ball : HAND_POSES.open, 30);
+  }
+
+  /** Test hook: how far the carrying palm sits off the ball surface (m). */
+  _measureGap(side) {
+    const h = this.hands.get(side);
+    _v.copy(PALM_CENTER).applyQuaternion(h.quat).add(h.pos);
+    const gap = Math.abs(_v.distanceTo(this.ballWorld) - BALL.radius - PALM_GAP);
+    if (gap > this.stats.maxHandGap) this.stats.maxHandGap = gap;
+  }
+
+  /** Called after the physics step to place the ball mesh when it is free. */
+  postStep() {
+    if (this.ball.mode === BallMode.FREE) this.ball.syncMesh();
+    else if (this.state === State.CONTACT && this.plan) this._measureGap(this._side(this.plan.hand));
+  }
+}
+
+// Local import shim so the controller can build hand orientations without a
+// circular dependency on Hands.
+import { Hands } from '../player/Hands.js';
+const HandsQuat = (palm, fingers, out) => Hands.quatFromPalm(palm, fingers, out);

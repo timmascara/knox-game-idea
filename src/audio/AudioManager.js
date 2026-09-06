@@ -105,6 +105,21 @@ export class AudioManager {
     n.stop(nt + 0.1);
   }
 
+  /** Soft slap of the ball meeting the palm. */
+  catchBall(intensity = 0.3) {
+    if (!this.ready) return;
+    const v = clamp(intensity, 0.05, 0.8);
+    const n = this._noiseSource();
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1500 + Math.random() * 400;
+    bp.Q.value = 0.9;
+    n.connect(bp);
+    const { t } = this._env(bp, this.sfxBus, 0.10 * v, 0.002, 0.045);
+    n.start(t);
+    n.stop(t + 0.08);
+  }
+
   rim() {
     if (!this.ready) return;
     for (const f of [1180, 1760]) {

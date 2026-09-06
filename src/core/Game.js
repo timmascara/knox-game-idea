@@ -4,22 +4,17 @@ import { Player } from '../player/Player.js';
 import { CameraRig } from '../player/CameraRig.js';
 import { Hands } from '../player/Hands.js';
 import { Basketball, BallMode } from '../ball/Basketball.js';
-import { BallController } from '../ball/BallController.js';
-import { Park } from '../world/Park.js';
+import { DribbleController } from '../ball/DribbleController.js';
+import { World } from '../world/World.js';
 import { AudioManager } from '../audio/AudioManager.js';
 import { HUD } from '../ui/HUD.js';
 import { Menu } from '../ui/Menu.js';
-import { NetworkManager } from '../net/NetworkManager.js';
-import { GameState } from '../state/GameState.js';
-import { ENVIRONMENTS } from '../world/environments.js';
-import { BALL } from './Constants.js';
+import { Tuning } from '../ui/Tuning.js';
 import { clamp } from './MathUtils.js';
 
 /**
  * Top-level orchestrator: owns the renderer + scene, constructs every system,
- * runs the fixed-order update loop, and mediates pause / settings / audio. Kept
- * deliberately thin — each subsystem does its own work; Game just sequences
- * them and handles cross-cutting concerns (resize, collision audio, pause).
+ * runs the fixed-order update loop, and mediates pause / settings / audio.
  */
 export class Game {
   constructor(physics, settings) {
@@ -28,26 +23,25 @@ export class Game {
     this.paused = true;
     this.started = false;
     this._cooldowns = { court: 0, rim: 0, backboard: 0 };
+    this._accum = 0;
+    this.fixedDt = 1 / 120;
 
     this._initRenderer();
-    this._initScene();
+    this.scene = new THREE.Scene();
 
-    this.gameState = new GameState();
     this.audio = new AudioManager(settings);
-    this.hud = new HUD(this.gameState);
-    this.network = new NetworkManager();
+    this.hud = new HUD();
 
-    this._initWorld();
+    this.world = new World(this.scene, this.physics, settings.get('quality'));
     this._initPlayer();
     this._initInput();
     this._initMenu();
     this._initCollisionAudio();
+    this.tuning = new Tuning();
 
     window.addEventListener('resize', () => this._onResize());
     this._onResize();
-
     this.clock = new THREE.Clock();
-    this.hud.setEnvName(this.park.currentEnv.name);
   }
 
   _initRenderer() {
@@ -57,44 +51,36 @@ export class Game {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 1.0;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     document.getElementById('app').appendChild(this.renderer.domElement);
   }
 
-  _initScene() {
-    this.scene = new THREE.Scene();
-  }
-
-  _initWorld() {
-    this.park = new Park(this.scene, this.physics, this.renderer, this.settings);
-  }
-
   _initPlayer() {
-    // Spawn near mid-court, a little off to the side, facing a hoop.
-    const spawn = new THREE.Vector3(2.5, 0.0, 7.5);
+    // Spawn at the top of the key, facing the near hoop, ball a step ahead.
+    const spawn = new THREE.Vector3(0, 0.02, 6.5);
     this.player = new Player(this.physics, spawn);
 
     this.cameraRig = new CameraRig(this.settings.get('fov'), window.innerWidth / window.innerHeight);
-    this.cameraRig.yaw = Math.PI; // look toward -Z hoop... actually toward +Z basket
+    this.cameraRig.yaw = 0; // look toward -Z
+    this.cameraRig.pitch = -0.28; // a natural slight downward gaze
     this.scene.add(this.cameraRig.yawObject);
 
-    this.hands = new Hands(this.cameraRig.camera);
+    this.hands = new Hands(this.scene);
+    this.ball = new Basketball(this.scene, this.physics, new THREE.Vector3(0.35, 0.3, 5.2));
 
-    this.ball = new Basketball(this.scene, this.physics, new THREE.Vector3(1.2, 0.3, 5.0));
-
-    this.ballController = new BallController({
-      scene: this.scene,
-      physics: this.physics,
+    this.dribble = new DribbleController({
       player: this.player,
       cameraRig: this.cameraRig,
       hands: this.hands,
       ball: this.ball,
-      park: this.park,
       audio: this.audio,
-      gameState: this.gameState,
       hud: this.hud,
     });
+    // The ball in your hands must never shove the body around.
+    this.player.ignoreCollider = (c) => c.handle === this.ball.colliderHandle && this.ball.mode !== BallMode.FREE;
+    this.dribble.update(0, null);
+    this.hands.snapToTargets();
   }
 
   _initInput() {
@@ -102,11 +88,8 @@ export class Game {
     this.input.sensitivity = this.settings.get('sensitivity');
     this.input.invertY = this.settings.get('invertY');
     this.input.onLockChange = (locked) => {
-      if (locked) {
-        this._resume();
-      } else if (this.started) {
-        this._pause();
-      }
+      if (locked) this._resume();
+      else if (this.started) this._pause();
     };
   }
 
@@ -115,7 +98,6 @@ export class Game {
       onStart: () => this._start(),
       onResume: () => this.input.requestLock(),
       onSettingChange: (key, val) => this._applySetting(key, val),
-      onEnvironment: (key) => this._setEnvironment(key),
     });
   }
 
@@ -133,7 +115,7 @@ export class Game {
         const speed = this.ball.velocity.length();
         if (this._cooldowns[tag] > 0) return;
         this._cooldowns[tag] = 0.08;
-        if (tag === 'court') this.audio.bounce(clamp(speed * 0.12, 0.3, 1.4));
+        if (tag === 'court') this.audio.bounce(clamp(speed * 0.14, 0.3, 1.4));
         else if (tag === 'rim') this.audio.rim();
         else if (tag === 'backboard') this.audio.backboard();
       },
@@ -145,10 +127,11 @@ export class Game {
     this.started = true;
     this.audio.init();
     this.audio.resume();
-    this.audio.startAmbience({ birds: this.park.currentEnv.ambienceBirds, rain: this.park.currentEnv.rain });
+    this.audio.startAmbience({ birds: true, rain: false });
     this.input.requestLock();
     this.menu.hide();
     this.hud.show();
+    this.hud.setHint('Walk into the ball to pick it up · E to grab');
   }
 
   _resume() {
@@ -159,6 +142,7 @@ export class Game {
 
   _pause() {
     this.paused = true;
+    this.tuning.hide();
     this.menu.showPause();
   }
 
@@ -167,14 +151,6 @@ export class Game {
     else if (key === 'invertY') this.input.invertY = val;
     else if (key === 'fov') this.cameraRig.setFov(val);
     else if (key === 'volume') this.audio.setVolumes();
-  }
-
-  _setEnvironment(key) {
-    this.park.applyEnvironment(key);
-    this.hud.setEnvName(ENVIRONMENTS[key].name);
-    if (this.audio.ready) {
-      this.audio.startAmbience({ birds: ENVIRONMENTS[key].ambienceBirds, rain: ENVIRONMENTS[key].rain });
-    }
   }
 
   _onResize() {
@@ -190,58 +166,50 @@ export class Game {
   }
 
   _frame() {
-    const dt = clamp(this.clock.getDelta(), 0, 1 / 30);
-
+    const dt = clamp(this.clock.getDelta(), 0, 1 / 20);
     if (!this.paused && this.started) {
-      this._update(dt);
+      if (this.input.wasPressed('Tab')) this.tuning.toggle();
+      // Fixed-step simulation so the dribble timing is identical at any fps.
+      this._accum += dt;
+      let steps = 0;
+      while (this._accum >= this.fixedDt && steps < 8) {
+        this._update(this.fixedDt);
+        this._accum -= this.fixedDt;
+        steps++;
+        // Edge-triggered input only applies to the first sub-step.
+        this.input.endFrame();
+      }
     }
-
     this.renderer.render(this.scene, this.cameraRig.camera);
     this.input.endFrame();
   }
 
+  /** One simulation tick. Public so tests can pump the game deterministically. */
   _update(dt) {
-    // 1) Look
     const look = this.input.consumeLook();
     this.cameraRig.applyLook(look.dx, look.dy);
 
-    // 2) Player movement (kinematic controller sets next translation).
     this.player.update(dt, this.input, this.cameraRig);
     if (this.player.lastLandImpact > 0) {
-      this.cameraRig.triggerLandDip(this.player.lastLandImpact * 0.14);
-      this.audio.footstep(1.2);
+      this.cameraRig.triggerLandDip(this.player.lastLandImpact * 0.12);
+      this.audio.footstep(1.0);
     }
 
-    // 3) Camera follows the player; refresh matrices for hand-space math.
     this.cameraRig.update(dt, this.player.position, this.player.planarSpeed, this.player.grounded);
     this.cameraRig.yawObject.updateMatrixWorld(true);
 
-    // 4) Ball possession / dribble / shooting.
-    this.ballController.update(dt, this.input);
-
-    // 5) Hands damp toward their targets.
+    this.dribble.update(dt, this.input);
     this.hands.update(dt);
 
-    // 6) Step physics once (CCD handles fast shots).
     this.physics.step();
     for (const k in this._cooldowns) this._cooldowns[k] = Math.max(0, this._cooldowns[k] - dt);
 
-    // 7) Rolling resistance + place the ball mesh from the post-step state.
     this.ball.applyRollingResistance(dt);
-    this.ballController.postStep();
+    this.dribble.postStep();
 
-    // 8) World animation (grass wind, sun follow, net sim, weather).
-    this.park.update(dt, this.player.position);
-    const ballPos = this.ball.position;
-    for (const hoop of this.park.hoops) {
-      hoop.update(dt, ballPos, BALL.radius);
-    }
-
-    // 9) Footstep audio cadence.
+    this.world.update(dt, this.player.position, this.ball.mesh.position);
     this._footsteps(dt);
-
-    // 10) Publish networking snapshot (no-op transport by default).
-    this.network.update(dt, NetworkManager.snapshot(this.player, this.cameraRig, this.ballController));
+    this.hud.update(dt, this.dribble, this.player);
   }
 
   _footsteps(dt) {
