@@ -645,17 +645,26 @@ export class DribbleController {
   }
 
   /**
-   * The free hand between release and catch: it follows the ball down for the
-   * first part of the flight (a real hand travels about half the ball's
-   * amplitude), then rises ahead of it to hover just above the catch point.
+   * A hand waiting for the ball. The hand that just released it follows it
+   * down for the first part of the flight (a real hand travels about half the
+   * ball's amplitude) and then rises ahead of it to hover above the catch
+   * point. The *other* hand — receiving a crossover, say — does not chase the
+   * ball: it moves early to hover over where the ball will arrive.
    */
   _handReady(side, plan, lambda) {
     const f = this.flight || plan.flight;
     const targetW = this.toWorld(f.B, _v2);
     const dirW = this.dirToWorld(plan.catchDir, _v3).normalize();
     const hoverY = targetW.y + 0.09;
-    let u = this.flight ? clamp(this.t / f.T, 0, 1) : 0;
-    // Follow: just above the ball, but never lower than ~45 cm under the catch.
+    const sameHand = side === this._side(plan.hand);
+    if (!sameHand || !this.flight) {
+      const p = _v.copy(targetW);
+      p.y = hoverY + 0.03;
+      this._handOnBall(side, p, dirW, 14 * lambda, HAND_POSES.open, 14);
+      return;
+    }
+    const u = clamp(this.t / f.T, 0, 1);
+    // Follow: just above the ball, but never lower than ~38 cm under the catch.
     const followY = Math.max(this.ballWorld.y + BALL.radius + 0.05, targetW.y - 0.38);
     const k = smoothstep(clamp((u - 0.15) / 0.6, 0, 1));
     const p = _v.copy(this.ballWorld).lerp(targetW, k);

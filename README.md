@@ -1,9 +1,9 @@
-# 🏀 Home Court
+# 🏀 Home Court — dribble lab
 
-A first-person, atmospheric indie basketball game built with **Three.js** and
-**Rapier** physics. Walk into a quiet park, pick up the ball, dribble, pull up,
-and let it swish through the net. It's about the *feeling* of finding a beautiful
-outdoor court and spending an hour there — not NBA 2K.
+A first-person basketball game built with **Three.js** and **Rapier**, being
+built one mastered system at a time. This stage is the handle: an open outdoor
+court, VR-style hands (no arms, no legs), a real basketball, and a dribbling
+engine whose whole job is to make the ball feel like it is on a string.
 
 ![Home Court](docs/hero.png)
 
@@ -16,39 +16,94 @@ npm install
 npm run dev
 ```
 
-Open the printed URL, click **Enter the Park**, and click again to capture the
-mouse.
+Open the printed URL, click **Step on the court**, and click again to capture
+the mouse. Walk into the ball to pick it up.
 
 ### Controls
 
 | Input | Action |
 | --- | --- |
-| `W A S D` | Move |
-| `Shift` | Sprint |
-| `Space` | Jump |
-| Mouse | Look |
-| `E` | Pick up / drop the ball |
-| **Left click** | Shoot (hold to gather, release to time it) · near the rim: **layup** / **dunk** |
-| **Right click** | Dribble move — crossover / between-the-legs / behind-the-back / hesitation (context-sensitive) |
-| Double-tap `A` / `D` | Quick crossover to that hand |
+| `W A S D` | Move · `Shift` sprint (speed dribble, ball pushed out ahead) |
+| Mouse | Look (the ball stays in front of your *body*, not your head) |
+| `E` | Pick up the ball · hold ↔ dribble |
+| **Left click** | Crossover · with `S` held: **step-back** |
+| **Right click** | Between the legs |
+| `Q` | Behind the back |
+| `F` | In & out |
+| `Space` | Hesitation (hang dribble, then explode) |
+| `C` (hold) | Low / protect dribble |
+| `G` | Drop the ball |
+| `Tab` | Live tuning panel |
 | `Esc` | Pause / settings |
 
-### Shooting is about timing, not power
+From a hold, **left click** starts dribbling in the right hand and **right
+click** in the left. Moves can be pressed ahead of time: a two-deep buffer
+chains them at the next catch, so *click, Q* is a crossover into a behind-
+the-back, and a pound can be interrupted early in its carry for snappier
+response.
 
-Pressing shoot starts the shot motion (**gather → set → release → follow-through**).
-When you release determines your timing grade:
+---
 
-- **GREEN** — perfect. Near-automatic swish. The green window is small, so hitting
-  it is the skill.
-- **YELLOW** — slightly off. Usually good, sometimes off the backboard or rim.
-- **ORANGE** — possible make or miss.
-- **RED** — mostly misses.
-- **EXTREME** — airballs.
+## How the dribble works
 
-Every shot is solved into a believable **arc** (distance-aware apex, drag-
-compensated), then handed to the physics engine — makes, backboard banks, rim
-rattles, bricks and airballs all *emerge* from the simulation. Chase down the
-rebound and keep playing.
+A dribble is not a sine wave. It is a repeating cycle with two very different
+halves, and the engine models both:
+
+1. **Contact** (ball in hand, ~0.15 s for a pound). The ball is caught still
+   rising, rides up a few centimetres as the hand absorbs it, then is pushed
+   down and out. This is a piecewise cubic Hermite path through a few
+   waypoints in the *handle frame* (a body-relative space that trails the feet
+   and your look direction with a little lag, so the ball has weight).
+   Every move is just a different set of waypoints — carried across the body
+   for a crossover, wrapped around the hip for a behind-the-back, rolled
+   inward and back out for an in-and-out — plus which hand receives it.
+
+2. **Flight** (ball out of the hand). A real ballistic solve: the release
+   velocity is *derived* from where the hand wants the ball back and how high,
+   the ball drops, hits the court with vertical restitution and a little
+   horizontal loss, and rises into the catch point still moving up ~0.9 m/s
+   so the hand meets a rising ball. Cadence is not a tuning number — it falls
+   out of the physics (hip-high pound ≈ 85 bpm, knee-high ≈ 120 bpm).
+
+Position **and velocity** are continuous through the whole cycle: the
+contact path starts with the flight's arrival velocity and ends with the next
+flight's release velocity. Nothing ever snaps.
+
+The hands are choreographed around that cycle: the carrying palm tracks the
+ball exactly, follows through after the release, drops with the ball, then
+rises ahead of it and descends to meet it at the catch. The other hand
+guards, or — when a move switches hands — moves early to hover over where the
+ball will arrive. Each move also sways the camera a few centimetres (the body
+shifting into the move), which sells it in first person.
+
+### Project layout
+
+```
+src/
+  core/         Constants (all the feel numbers) · MathUtils · Input · Game (fixed-step loop)
+  physics/      Physics — thin Rapier world wrapper
+  player/       Player (kinematic capsule) · CameraRig (look + body sway) · HandModel (rigged hand) · Hands (the pair, world-space)
+  ball/         Basketball (procedural 8-panel ball) · BounceMath (Flight solver + Hermite Contact)
+                Moves (the move library, one cycle plan each) · DribbleController (possession, cycle, buffer, hands, sway)
+  world/        World (open court, sun, horizon) · Court · Hoop · Net · Sky
+  audio/        AudioManager — synthesised bounce / catch / squeak / footsteps / wind
+  ui/           HUD · Menu · Tuning · styles
+  state/        Settings (localStorage)
+scripts/        smoke.mjs (headless test) · capture.mjs (contact sheets of any move)
+```
+
+### The hands and the ball
+
+- **Hands** are built procedurally: a beveled palm outline, four fingers with
+  three joints each, a thumb with a swinging metacarpal, knuckles, a wrist
+  stump under a sweatband. Poses are four scalars (per-finger curl, spread,
+  thumb curl, thumb abduction) that damp toward named poses (`relaxed`,
+  `open`, `ball`, `grip`, `guard`). They live in world space, attached to the
+  body — turning your head never drags them with it.
+- **The ball**'s colour, bump and roughness maps are painted per texel from
+  the real seam geometry: an equator, a meridian, and two side circles of
+  55° angular radius, which is exactly what produces a basketball's eight
+  panels. Pebble grain is hashed value noise stretched to stay isotropic.
 
 ---
 
@@ -57,80 +112,33 @@ rebound and keep playing.
 ```bash
 npm run build          # production bundle to dist/
 npm run preview        # serve the build on http://127.0.0.1:4173
-npm run test:smoke     # headless Chromium smoke test (boot + gameplay + stability)
+npm run test:smoke     # headless Chromium: boots, dribbles, checks invariants
+node scripts/capture.mjs all   # contact sheets of every move → screenshots/
 ```
 
-The smoke test boots the built game in headless Chromium, checks it renders
-without errors, then pumps the fixed-step loop to exercise pickup, dribbling and
-a full timing shot — asserting green shots make and that nothing goes non-finite.
-Set `CHROME_PATH` if your Chrome/Chromium isn't at the default path.
+The smoke test pumps the fixed-step loop through pickup, a pound rhythm,
+every move, sprinting, the low dribble, a buffered combo, and a drop and
+chase, and asserts: the ball never dips under the court, its velocity is
+continuous across catch and release, the palm stays on the ball while
+carrying, every move hands off to the intended hand and returns to a pound,
+and nothing goes non-finite. `capture.mjs` renders deterministic 20-frame
+contact sheets so a move can be reviewed frame by frame without a GPU.
 
 ---
 
-## How it works
+## Tuning
 
-One physics engine (Rapier) is authoritative over the ball, the court / rim /
-backboard / props collision, and the player capsule. Rendering, materials,
-instancing and animation are Three.js.
+`Tab` opens sliders over every number in `DRIBBLE` (`src/core/Constants.js`):
+dribble heights, ball offsets, restitution, catch rise speed, push depth,
+handle lag, per-move carry times, sway amplitudes. Changes apply live and are
+not persisted — when something feels right, write it into Constants.
 
-### Project layout
+## Not here yet (on purpose)
 
-```
-src/
-  core/         Constants · MathUtils · Input (pointer lock) · Game (orchestrator)
-  physics/      Physics — thin Rapier world wrapper + collider tagging
-  player/       Player (kinematic character controller) · CameraRig (FPS look) · Hands
-  ball/         Basketball (dynamic/kinematic modes) · BallController (the gameplay brain)
-                Dribble + moves + shooting + layups + dunks live here · Shot (arc + grading math)
-  world/        Court · Hoop · Net (verlet) · Park · Grass · Trees · Props · Weather · Sky · environments
-  audio/        AudioManager — fully synthesised SFX + ambience (no asset files)
-  ui/           HUD · Menu · styles
-  state/        Settings (localStorage) · GameState (scoreboard)
-  net/          NetworkManager — multiplayer seam (no-op transport by default)
-main.js         Boot: init Rapier WASM → build Game → run
-```
-
-### Notable systems
-
-- **Physically-shaped dribble.** While carried, the ball is a kinematic body
-  driven along a *gravity-accurate* bounce (a quadratic that kisses the floor at
-  the bottom and reaches the hand at the top), offset to the active hand, leading
-  the player as they move. Crossovers, between-the-legs, behind-the-back and
-  hesitations reshape that path and switch hands. On a shot / drop / rebound the
-  ball becomes a fully dynamic Rapier body again — no teleporting.
-- **Real hoop.** A perfectly horizontal circular rim (a ring of sphere colliders
-  so the ball can drop through and rattle), a cuboid backboard, and a verlet-
-  simulated net that only ever hangs from the rim and swishes as the ball passes.
-- **Instanced world.** Grass (thousands of blades, one `InstancedMesh` with a wind
-  shader), trees (each a merged low-poly prototype, one draw call for the grove),
-  rocks, bushes and fence posts are all GPU-instanced. Trees are faceted forms,
-  not green spheres.
-- **Synthesised audio.** Ball bounces, rim, backboard, net swish, footsteps, shoe
-  squeaks, wind, birds and rain are all generated at runtime via the Web Audio
-  API, so the game is fully self-contained.
-- **Environments.** `afternoon`, `fall`, `dusk` and `rain` are palette + lighting
-  presets over shared geometry (switchable in Settings) — a single strong
-  environment, reskinnable rather than five half-built ones.
-
----
-
-## Roadmap / architecture seams
-
-The project is intentionally structured so the big future features slot in
-without a rewrite:
-
-- **Multiplayer.** `net/NetworkManager` defines the client contract — publish a
-  compact local snapshot each tick, receive remote snapshots to interpolate proxy
-  avatars. The default `LocalTransport` is a no-op; a real build swaps in a
-  WebSocket/WebRTC transport backed by an **authoritative server** that owns ball
-  possession and shot resolution (never one browser). Player, ball and possession
-  state are already isolated behind clean interfaces.
-- **Desktop / Steam.** The game is a self-contained Three.js app with no hard
-  browser-tab dependency, so it can be wrapped by Electron/Tauri for macOS /
-  Windows / Linux, with Steamworks (friends, invites, lobbies, achievements)
-  layered on later.
-- **More courts & moves.** New environments are one entry in `world/environments`;
-  new dribble moves are one case in the `BallController` move system.
+Shooting, layups, dunks, the park, weather and the scoreboard were removed to
+keep this stage about the handle; the earlier build is in git history
+(`bb515cf`). A spin move is deliberately absent: a first-person spin with no
+body is nauseating, and needs a camera treatment of its own.
 
 ## Tech
 
@@ -138,5 +146,5 @@ without a rewrite:
 - [Rapier](https://rapier.rs/) (`@dimforge/rapier3d-compat` `0.14`)
 - [Vite](https://vitejs.dev/) `5`
 
-MIT licensed. All geometry, textures and audio are generated procedurally in
-code — no third-party assets are bundled.
+MIT licensed. All geometry, textures and audio are generated in code — no
+third-party assets are bundled.

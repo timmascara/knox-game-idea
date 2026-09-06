@@ -7,7 +7,7 @@
  *   npm run build && npm run preview     # serve dist on :4173
  *   node scripts/capture.mjs [scenario...]
  *
- * Scenarios: hold, ball, pound, crossover, between, behind, inout, hesitation,
+ * Scenarios: hero, hold, handclose, ball, ballclose, pound, crossover, between, behind, inout, hesitation,
  * stepback, speed, low, all (default: hold pound).
  */
 import { chromium } from 'playwright-core';
@@ -129,6 +129,11 @@ const scenarios = {
     });
     await shot('hand-side');
     await page.evaluate(() => window.__h.freecam());
+  },
+  async hero() {
+    // Mid-carry frame of a right-hand pound, for the README.
+    await page.evaluate(() => { window.__h.dribble(1); window.__h.look(-0.55); window.__h.tick(150); while (window.__game.dribble.state !== 'contact') window.__h.tick(1); window.__h.tick(6); });
+    await shot('hero');
   },
   async ballclose() {
     await page.evaluate(() => {
