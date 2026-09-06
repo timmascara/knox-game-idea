@@ -24,6 +24,8 @@ export class Input {
     // Fallback for hosts that refuse pointer lock (embedded frames): read
     // mouse deltas and buttons without the lock.
     this.allowUnlocked = false;
+    // Unlocked-mode cursor position on the canvas, normalised to -1..1.
+    this.cursor = { x: 0, y: 0, inside: false };
     this._enabled = true;
     this._bind();
   }
@@ -48,7 +50,15 @@ export class Input {
       if (!this.locked && !this.allowUnlocked) return;
       this.mouseDX += e.movementX || 0;
       this.mouseDY += e.movementY || 0;
+      if (!this.locked) {
+        const r = this.dom.getBoundingClientRect();
+        this.cursor.x = ((e.clientX - r.left) / Math.max(1, r.width)) * 2 - 1;
+        this.cursor.y = ((e.clientY - r.top) / Math.max(1, r.height)) * 2 - 1;
+        this.cursor.inside = true;
+      }
     });
+    document.addEventListener('mouseleave', () => { this.cursor.inside = false; });
+    window.addEventListener('blur', () => { this.cursor.inside = false; });
 
     document.addEventListener('mousedown', (e) => {
       if (!this.locked && !this.allowUnlocked) return;
@@ -115,12 +125,29 @@ export class Input {
     return this.released.has(code);
   }
 
-  /** Consume accumulated mouse look, returning {dx, dy} in radians. */
-  consumeLook() {
-    const dx = this.mouseDX * this.sensitivity;
-    const dy = this.mouseDY * this.sensitivity * (this.invertY ? -1 : 1);
+  /**
+   * Consume accumulated mouse look, returning {dx, dy} in radians. Without a
+   * pointer lock the cursor stops at the frame edge, so an edge zone keeps
+   * the view turning: push the cursor toward an edge to keep turning that
+   * way, bring it back toward the centre to stop.
+   */
+  consumeLook(dt = 0) {
+    let dx = this.mouseDX * this.sensitivity;
+    let dy = this.mouseDY * this.sensitivity * (this.invertY ? -1 : 1);
     this.mouseDX = 0;
     this.mouseDY = 0;
+    if (!this.locked && this.allowUnlocked && dt > 0) {
+      const zone = 0.72; // beyond ±zone the edge turn engages
+      const rate = 2.4; // rad/s at the very edge
+      const edge = (v) => {
+        const a = Math.abs(v);
+        if (a <= zone) return 0;
+        const k = Math.min(1, (a - zone) / (1 - zone));
+        return Math.sign(v) * k * k * rate * dt;
+      };
+      dx += edge(this.cursor.x);
+      dy += edge(this.cursor.y) * 0.6 * (this.invertY ? -1 : 1);
+    }
     return { dx, dy };
   }
 

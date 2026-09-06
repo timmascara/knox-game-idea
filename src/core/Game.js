@@ -144,7 +144,7 @@ export class Game {
         this.input.allowUnlocked = true;
         this.renderer.domElement.style.cursor = 'none';
         this._resume();
-        this.hud.setHint('This window refuses mouse capture — click the court to retry · Esc pauses');
+        this.hud.setHint('This window refuses mouse capture: push the cursor toward an edge to keep turning · Esc pauses');
       }
     }, 600);
   }
@@ -205,7 +205,7 @@ export class Game {
 
   /** One simulation tick. Public so tests can pump the game deterministically. */
   _update(dt) {
-    const look = this.input.consumeLook();
+    const look = this.input.consumeLook(dt);
     this.cameraRig.applyLook(look.dx, look.dy);
 
     this.player.update(dt, this.input, this.cameraRig);
