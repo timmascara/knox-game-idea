@@ -96,7 +96,7 @@ export class Game {
   _initMenu() {
     this.menu = new Menu(this.settings, {
       onStart: () => this._start(),
-      onResume: () => this.input.requestLock(),
+      onResume: () => (this.input.allowUnlocked ? this._resume() : this.input.requestLock()),
       onSettingChange: (key, val) => this._applySetting(key, val),
     });
   }
@@ -132,6 +132,14 @@ export class Game {
     this.menu.hide();
     this.hud.show();
     this.hud.setHint('Walk into the ball to pick it up · E to grab');
+    // Hosts that refuse pointer lock (an embedded frame): play unlocked.
+    setTimeout(() => {
+      if (this.started && !this.input.locked && this.paused) {
+        this.input.allowUnlocked = true;
+        this._resume();
+        this.hud.setHint('Mouse look without pointer lock · Esc pauses · walk into the ball');
+      }
+    }, 600);
   }
 
   _resume() {
@@ -169,6 +177,10 @@ export class Game {
     const dt = clamp(this.clock.getDelta(), 0, 1 / 20);
     if (!this.paused && this.started) {
       if (this.input.wasPressed('Tab')) this.tuning.toggle();
+      if (this.input.allowUnlocked && this.input.wasPressed('Escape')) {
+        this._pause();
+        return;
+      }
       // Fixed-step simulation so the dribble timing is identical at any fps.
       this._accum += dt;
       let steps = 0;

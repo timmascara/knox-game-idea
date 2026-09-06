@@ -21,6 +21,9 @@ export class Input {
     this.sensitivity = 0.0022;
     this.invertY = false;
 
+    // Fallback for hosts that refuse pointer lock (embedded frames): read
+    // mouse deltas and buttons without the lock.
+    this.allowUnlocked = false;
     this._enabled = true;
     this._bind();
   }
@@ -32,7 +35,7 @@ export class Input {
       if (!this.keys.has(code)) this.pressed.add(code);
       this.keys.add(code);
       // Prevent the page from scrolling on space etc. while playing.
-      if (this.locked && ['Space', 'ArrowUp', 'ArrowDown', 'Tab'].includes(code)) {
+      if ((this.locked || this.allowUnlocked) && ['Space', 'ArrowUp', 'ArrowDown', 'Tab'].includes(code)) {
         e.preventDefault();
       }
     });
@@ -42,13 +45,14 @@ export class Input {
     });
 
     document.addEventListener('mousemove', (e) => {
-      if (!this.locked) return;
+      if (!this.locked && !this.allowUnlocked) return;
       this.mouseDX += e.movementX || 0;
       this.mouseDY += e.movementY || 0;
     });
 
     document.addEventListener('mousedown', (e) => {
-      if (!this.locked) return;
+      if (!this.locked && !this.allowUnlocked) return;
+      if (e.target && e.target.closest && e.target.closest('.overlay, #tuning')) return;
       if (e.button === 0) {
         this.mouseDown.left = true;
         this.mousePressed.left = true;
@@ -69,7 +73,7 @@ export class Input {
       }
     });
     document.addEventListener('contextmenu', (e) => {
-      if (this.locked) e.preventDefault();
+      if (this.locked || this.allowUnlocked) e.preventDefault();
     });
 
     document.addEventListener('pointerlockchange', () => {
