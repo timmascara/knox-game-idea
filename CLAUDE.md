@@ -14,6 +14,24 @@ the next thing.
   no legs), a real basketball, and a dribble engine.
 - **Stage 2 — shooting. Not started.** See *Next stage* below.
 
+## Leave the repo ready for the next session
+
+The owner works in short chats, roughly one per feature, tweak or bug. A
+session that ends without updating the repo strands the next one. So before
+you finish **any** piece of work, however small:
+
+1. Commit and push. Never leave work sitting only in the working tree.
+2. Update this file. Change *Where we are* if the stage moved, *Next stage* if
+   you learned something that changes the plan, and *Decisions already made*
+   if you made a call worth not re-litigating.
+3. Write down anything that surprised you — a constraint you hit, a dead end
+   worth not repeating, a host or tool that behaves oddly. That is the part a
+   fresh session cannot rediscover cheaply.
+4. Run `npm run test:smoke` and see it pass before the final push.
+
+Treat this file as the project's memory. It is the only thing a new session
+reads automatically, so if it is not written here it did not happen.
+
 ## Run it
 
 ```bash
