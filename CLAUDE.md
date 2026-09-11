@@ -10,8 +10,9 @@ built **one system at a time to a high standard** rather than all at once.
 The owner's rule for the project: master the thing you are on before adding
 the next thing.
 
-- **Stage 1 — the handle. Done.** Open outdoor court, VR-style hands (no arms,
-  no legs), a real basketball, and a dribble engine.
+- **Stage 1 — the handle. Done and verified in real play.** Open outdoor
+  court, VR-style hands (no arms, no legs), a real basketball, and a dribble
+  engine. Deployed, mouse capture confirmed working by the owner.
 - **Stage 2 — shooting. Not started.** See *Next stage* below.
 
 ## Leave the repo ready for the next session
@@ -128,10 +129,12 @@ straightens.
   it runs in a sandboxed frame that **refuses pointer lock**. Nothing in the
   page can change that. There is an edge-turn fallback for it: push the hidden
   cursor toward a frame edge to keep turning.
-- **The real fix, and it works: https://timmascara.github.io/knox-game-idea/**
-  `.github/workflows/pages.yml` publishes there on every push to `main`.
-  That is a full page, so pointer lock behaves normally. Send people there,
-  not to the artifact link.
+- **Play here: https://timmascara.github.io/knox-game-idea/** — published by
+  `.github/workflows/pages.yml` on every push to `main`. A full page, so
+  pointer lock works; the owner has confirmed mouse capture behaves there.
+  **This is the canonical link.** Send people here, not to the artifact.
+- Note the deploy only fires on push to `main`. A session that pushes only to
+  a feature branch will not publish anything.
 - This sandbox's proxy blocks `github.io` (CONNECT 403), so you cannot curl
   the live site from a session. Confirm a deploy landed via the API instead:
   `/repos/<owner>/<repo>/deployments?environment=github-pages` and read the
