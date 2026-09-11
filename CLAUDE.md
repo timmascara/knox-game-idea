@@ -130,7 +130,9 @@ straightens.
   cursor toward a frame edge to keep turning.
 - The real fix is a full page: `.github/workflows/pages.yml` deploys to
   GitHub Pages at https://timmascara.github.io/knox-game-idea/ on every push
-  to `main`.
+  to `main`. **As of the last session the deploy had never yet succeeded** —
+  the build passes but the environment rejects the ref (see below). Verify
+  the site actually serves before assuming it is live.
 - **Pages gotcha, hit twice already.** The `github-pages` *environment* has a
   deployment-branch rule separate from the workflow trigger. When a push is
   not allowed by it, the `build` job succeeds and the `deploy` job fails
