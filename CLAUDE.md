@@ -128,17 +128,23 @@ straightens.
   it runs in a sandboxed frame that **refuses pointer lock**. Nothing in the
   page can change that. There is an edge-turn fallback for it: push the hidden
   cursor toward a frame edge to keep turning.
-- The real fix is a full page: `.github/workflows/pages.yml` deploys to
-  GitHub Pages at https://timmascara.github.io/knox-game-idea/ on every push
-  to `main`. **As of the last session the deploy had never yet succeeded** —
-  the build passes but the environment rejects the ref (see below). Verify
-  the site actually serves before assuming it is live.
-- **Pages gotcha, hit twice already.** The `github-pages` *environment* has a
-  deployment-branch rule separate from the workflow trigger. When a push is
-  not allowed by it, the `build` job succeeds and the `deploy` job fails
-  **in about one second with no steps run at all**. That signature means an
-  environment rejection, not a build problem — do not go debugging the build.
-  Fix it at Settings → Environments → github-pages → Deployment branches.
+- **The real fix, and it works: https://timmascara.github.io/knox-game-idea/**
+  `.github/workflows/pages.yml` publishes there on every push to `main`.
+  That is a full page, so pointer lock behaves normally. Send people there,
+  not to the artifact link.
+- This sandbox's proxy blocks `github.io` (CONNECT 403), so you cannot curl
+  the live site from a session. Confirm a deploy landed via the API instead:
+  `/repos/<owner>/<repo>/deployments?environment=github-pages` and read the
+  latest deployment's status — `state: success` plus an `environment_url`
+  means it published.
+- **Pages gotcha, cost three failed runs to diagnose.** The `github-pages`
+  *environment* has a deployment-branch rule that is separate from, and
+  overrides, the workflow's `on: push: branches:` trigger. When it rejects a
+  ref the `build` job succeeds and the `deploy` job fails **in about one
+  second having run no steps at all** — no logs, no annotations worth
+  reading. That signature means an environment rejection, not a build
+  problem, so do not go debugging the build. Fix it at Settings →
+  Environments → github-pages → Deployment branches.
 - The workflow deploys from `main` only. Do not add a second triggering
   branch: the shared `concurrency: pages` group means a second push cancels
   main's in-flight deploy.

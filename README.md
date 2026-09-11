@@ -19,7 +19,14 @@ npm run dev
 Open the printed URL, click **Step on the court**, and click again to capture
 the mouse. Walk into the ball to pick it up.
 
-### Playing it hosted
+### Play it in your browser
+
+**https://timmascara.github.io/knox-game-idea/**
+
+Published from `main` on every push. Use that link rather than an embedded
+preview: a full page can capture the mouse, and embedded frames refuse to.
+
+### Hosting setup
 
 `.github/workflows/pages.yml` deploys a playable build to GitHub Pages. Two
 settings are needed, both one-time:
