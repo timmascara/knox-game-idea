@@ -19,10 +19,20 @@ npm run dev
 Open the printed URL, click **Step on the court**, and click again to capture
 the mouse. Walk into the ball to pick it up.
 
-The repo also ships a GitHub Pages workflow (`.github/workflows/pages.yml`).
-Enable it once under **Settings → Pages → Source: GitHub Actions** and every
-push deploys a playable build to `https://<owner>.github.io/<repo>/` — a full
-page, so mouse capture works there (embedded previews often refuse it).
+### Playing it hosted
+
+`.github/workflows/pages.yml` deploys a playable build to GitHub Pages. Two
+settings are needed, both one-time:
+
+1. **Settings → Pages → Source: GitHub Actions**
+2. **Settings → General → Default branch**: set it to `main`
+
+The second one matters because the `github-pages` environment only lets the
+repo's *default* branch deploy. Once both are set, every push to `main`
+publishes to `https://<owner>.github.io/<repo>/`.
+
+Use the hosted page rather than an embedded preview: a full page can capture
+the mouse, and embedded frames refuse to.
 
 ### Controls
 
@@ -46,6 +56,10 @@ click** in the left. Moves can be pressed ahead of time: a two-deep buffer
 chains them at the next catch, so *click, Q* is a crossover into a behind-
 the-back, and a pound can be interrupted early in its carry for snappier
 response.
+
+Working on this project? Read **[CLAUDE.md](CLAUDE.md)** first — it records
+the invariants, the conventions, what is deliberately absent, and what the
+next stage needs.
 
 ---
 
