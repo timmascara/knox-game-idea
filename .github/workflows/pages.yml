@@ -1,13 +1,24 @@
-# Deploys the built game to GitHub Pages on every push to main or the
-# dribble-lab branch. Enable it once in the repo: Settings → Pages →
-# Source: "GitHub Actions". The game then lives at
-#   https://<owner>.github.io/<repo>/
-# which is a full page, so pointer lock (mouse capture) works there.
+# Deploys the built game to GitHub Pages on every push to main.
+#
+# Two one-time repo settings are required:
+#   1. Settings → Pages → Source: "GitHub Actions"
+#   2. Settings → Environments → github-pages → Deployment branches:
+#      must allow `main`. GitHub's default here is "default branch only",
+#      which works as long as main IS the default branch. A stale branch
+#      rule that does not match main makes the deploy job fail instantly
+#      with no steps run.
+#
+# Only main deploys. Feature branches are intentionally excluded: the
+# github-pages environment rejects non-default branches anyway, and a second
+# triggering branch would cancel main's run via the concurrency group below.
+#
+# The game then lives at https://<owner>.github.io/<repo>/ which is a full
+# page, so pointer lock (mouse capture) works there.
 name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main, claude/basketball-dribbling-game-bhij3v]
+    branches: [main]
   workflow_dispatch:
 
 permissions:

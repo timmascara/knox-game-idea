@@ -128,21 +128,31 @@ straightens.
   it runs in a sandboxed frame that **refuses pointer lock**. Nothing in the
   page can change that. There is an edge-turn fallback for it: push the hidden
   cursor toward a frame edge to keep turning.
-- The real fix is a full page. `.github/workflows/pages.yml` deploys to GitHub
-  Pages, but **only the repo's default branch is allowed to deploy** by the
-  `github-pages` environment.
+- The real fix is a full page: `.github/workflows/pages.yml` deploys to
+  GitHub Pages at https://timmascara.github.io/knox-game-idea/ on every push
+  to `main`.
+- **Pages gotcha, hit twice already.** The `github-pages` *environment* has a
+  deployment-branch rule separate from the workflow trigger. When a push is
+  not allowed by it, the `build` job succeeds and the `deploy` job fails
+  **in about one second with no steps run at all**. That signature means an
+  environment rejection, not a build problem — do not go debugging the build.
+  Fix it at Settings → Environments → github-pages → Deployment branches.
+- The workflow deploys from `main` only. Do not add a second triggering
+  branch: the shared `concurrency: pages` group means a second push cancels
+  main's in-flight deploy.
 - The single-file build inlines the hand GLB as a data URI. Strict CSP hosts
   refuse `fetch()` on `data:` URLs, so `HandAsset.js` base64-decodes it
   directly. **Do not reintroduce a fetch there.**
 
 ## Branches
 
-The repo's default branch is currently `claude/adoring-noether-9rslwx`, which
-holds the **old** pre-dribble park game at `bb515cf`. All current work is on
-`claude/basketball-dribbling-game-bhij3v`, and `main` now points at the same
-head. Setting `main` as the repo default fixes both the Pages deploy and
-fresh-session checkouts. If you start a session and the code looks like a park
-with grass and trees and a shot meter, you are on the wrong branch.
+**`main` is the default branch and the one to work from.** Start new sessions
+there.
+
+`claude/adoring-noether-9rslwx` still holds the **old** pre-dribble park game
+at `bb515cf`, kept only as reference for the shooting stage. If you open a
+session and the code looks like a park with grass, trees and a shot meter,
+you are on the wrong branch.
 
 ## Next stage: shooting
 
