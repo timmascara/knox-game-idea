@@ -170,6 +170,21 @@ Read `src/ball/Shot.js` (pure maths) and the SHOOTING section of
 `DribbleController` (the states) before touching it. Every feel number is
 in `SHOT` in `Constants.js`; the Tab panel has a SHOT TUNING section.
 
+**Catching.** Looking at a ball within 2.3 m (the look ray passing within
+~0.4 m of its centre) catches it whatever it is doing — off the iron,
+rolling, in the air, up to 10 m/s (`_lookCatch`); the gather absorbs the
+velocity. Walking into a slow ball still works without looking; the pick
+up key reaches 2.3 m / 8 m/s. The owner's ask: "pick it up whenever my
+cursor looks at it" — before this, a rebound coming back off the rim
+could not be caught.
+
+**Hands and the hop.** The handle frame's floor stays put through a hop
+so a *dribble's* bounce path does not lift. Everything else rides the
+body: while holding (or gathering) the frame follows the feet, so the held
+ball rises with you; the free hands' rest / guard / follow-through targets
+add `bodyLift` (feet minus frame floor). Before this the hands and a held
+ball stayed at floor height when you jumped and visibly detached.
+
 **Input.** Every action goes through the binding map (`src/core/Bindings.js`,
 stored in Settings, edited in the pause menu's Controls panel; game code
 asks `input.down('shoot')` / `pressedAction('jump')`, never a key). Defaults
@@ -198,14 +213,37 @@ sweeps from wherever it was — hip, or mid-bounce — up the shooting side to
 the first cut paused at a chest-high gather and the ball rushed there and
 stalled, a visible stutter that also tripped the velocity invariant), then
 a short extension (`layupExtension`, 0.30) at the rim, one hand, palm up,
-and the camera leans into the drive. A *tap* of the shoot key while airborne releases; the
-ideal tap is `layupReleaseAfterApex` (0.08 s) past the top of the jump
-(`layupTiming()` in `Shot.js` derives the clock from the jump speed), so
-the natural rhythm is J, then K a third of a second later. Grading is
-two-zone: within `layupWindow` (±0.09 s) it goes — a soft drop over the
-front rim peaking `layupMinApex` above it — otherwise short onto the front
-iron (`ZONE.FRONT`). No tap before the feet land → `_landWithBall`: the
-ball gathers back into the hold, no shot, no result. The shoot key near
+and the camera leans into the drive. A *tap* of the shoot key while airborne releases. The
+release point is `layupReleaseAfterApex` (0.08 s) past the top of the jump
+(`layupTiming()` in `Shot.js` derives the clock from the jump speed); a
+tap *before* that is held (`shot.armed`) and the ball leaves at that point,
+a tap after leaves at once — so J then K in any quick succession always
+releases up at the rim with the full animation. **Uncontested, every tap
+while airborne goes in** (`layupWindow` is 9 s, i.e. the whole airtime):
+the owner's call, "jump with J, click K once, make it every time". The
+meter and timing flash are not shown for an uncontested layup — there is
+nothing to time. Contested (`contested` hook) narrows the window to
+`layupContestedWindow` and brings the meter back. No tap before the feet
+land → `_landWithBall`: the ball gathers back into the hold, no shot.
+
+**The takeoff paces the drive** (`layupStandoff` 1.2 m, `layupLunge`
+2.5 m/s): at J the body's horizontal velocity is set toward the rim so the
+feet *land* 1.2 m from it wherever the takeoff was — a sprint slows, a
+standing start hops forward. The ball is carried ~0.75 m ahead of the
+feet, so every release, early or late on the way down, happens about half
+a metre from the rim. Two lessons here: pacing to reach the standoff *at
+the release* left late taps under the rim (the body kept drifting), and a
+0.8 m standoff did the same because of the carry. Before any of this, a
+sprinting drive covered the whole 2.3 m before the tap and released from
+under the rim, where the soft drop goes up through the net and off the
+glass: the owner saw a bank on every layup. Taking off *inside* the
+standoff, the takeoff steps back to it instead (`layupFade`, up to 1.5
+m/s — a fade-away) and the ball is carried overhead rather than out front
+(`load.z` shrinks toward 0.18 as the takeoff nears 0.5 m from the rim);
+without both, a takeoff beside the rim still had the ball under it. Lab:
+48/48 from twelve spots, right beside the rim to 2.5 m out, at taps from
+0.3 s early to 0.19 s late; smoke: J-then-K at once, at the top, late,
+from a sprint, and no tap (lands holding the ball). The shoot key near
 the rim on the ground is *also* a takeoff (so K, K works) rather than a
 no-timing auto-layup, which would have made the window meaningless. The
 first build had the layup as hold-and-release on the shoot key with the
@@ -470,9 +508,12 @@ paste it back).
   owner's own choice after two play-tests; between-the-legs went back to
   right mouse). Nothing reads physical keys except WASD and the menu. Bump
   `BINDINGS_VERSION` when defaults change so saved layouts migrate.
-- **Layups are J (takeoff) then a K tap (release), never a hold.** Owner's
-  call: "by then I'm already on the ground". The window sits at the top of
-  the jump.
+- **Layups are J (takeoff) then a K tap (release), never a hold, and
+  uncontested they always go in.** Owner's calls: "by then I'm already on
+  the ground" and "jump with J, click K once, make it every time". Timing
+  pressure on a layup only arrives with defenders (the `contested` hook).
+- **Looking at a nearby ball catches it.** Speed does not matter (below 10
+  m/s); the gather absorbs it.
 - **Always right-handed.** The shot gathers into the right hand whichever
   hand was dribbling.
 - **The body squares up to the basket during a shot** while the head stays

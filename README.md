@@ -20,7 +20,7 @@ npm run dev
 ```
 
 Open the printed URL, click **Step on the court**, and click again to capture
-the mouse. Walk into the ball to pick it up.
+the mouse. Look at the ball to catch it.
 
 ### Play it in your browser
 
@@ -76,9 +76,9 @@ and it swishes; just outside and it catches back iron and pops out;
 further and it comes off the glass; further still and it is an airball.
 Inside about two and a half metres of the rim, `J` with the ball is a
 layup: you leap at the basket, the ball is scooped up your shooting side,
-and a tap of `K` at the top of the jump lets it go — one-handed, a wide
-window that nearly always goes, a front-rim miss when it doesn't, and if
-you never tap you come down holding the ball. Every zone is deterministic.
+and a tap of `K` lets it go at the rim — tap early and it waits for the
+top of the jump. With nobody guarding you it goes in every time; if you
+never tap you come down holding the ball. Every zone is deterministic.
 The body squares up to the basket by itself and keeps its momentum; your
 head stays free. A made shot drops out of the net and settles under the
 rim. Every key above can be rebound from the pause menu.

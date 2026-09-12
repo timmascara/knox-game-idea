@@ -173,8 +173,21 @@ export const SHOT = {
   // tapping and you come down holding the ball.
   layupRange: 2.6,
   layupJumpSpeed: 5.0, // a real leap: ~0.7 m, 0.55 s in the air
-  layupReleaseAfterApex: 0.08, // the ideal tap, seconds after the top of the jump
-  layupWindow: 0.09,
+  layupReleaseAfterApex: 0.08, // the release, seconds after the top of the jump
+  // The takeoff paces the drive so the feet *land* `layupStandoff` from the
+  // rim, wherever it started: a sprint slows to that, a standing start hops
+  // forward up to `layupLunge`. Every release — early, at the top, or late
+  // on the way down — then happens beside the rim. Released from under the
+  // rim the soft drop goes up through the net and off the glass; the owner
+  // saw banks on every layup until this.
+  layupStandoff: 1.2, // feet; the ball is carried ~0.75 m ahead, so it releases ~0.5 m from the rim
+  layupLunge: 2.5,
+  layupFade: 1.5, // inside the standoff the takeoff steps back at up to this (m/s)
+  // Uncontested, any tap while airborne goes in: the owner's call ("jump
+  // with J, click K once, make it every time"). A tap before the top of
+  // the jump is held until the top, so the release always comes at the
+  // rim. Contested (a hook for later) narrows the window.
+  layupWindow: 9,
   layupContestedWindow: 0.03,
   // The scoop is one continuous sweep from wherever the ball is (hip, or
   // mid-bounce) up the shooting side to beside the head, then the arm

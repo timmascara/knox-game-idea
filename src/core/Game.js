@@ -175,7 +175,7 @@ export class Game {
     const b = this.input.bindings;
     const L = (a) => codeLabel(b[a]);
     this.dribble.hints = {
-      loose: `Walk into the ball to pick it up · ${L('pickup')} to grab`,
+      loose: `Look at the ball to catch it · ${L('pickup')} to grab`,
       hold: `${L('crossover')}: dribble right · ${L('between')}: dribble left · hold ${L('shoot')} to shoot · ${L('drop')}: drop`,
       layup: `${L('shoot')} to release`,
       nearRim: `${L('jump')} to drive · ${L('shoot')} to release`,

@@ -52,7 +52,10 @@ const r = await page.evaluate(async ({ spots, errs, params, zone }) => {
     let guard = 0; let released = false;
     while (d.state !== 'loose' && d.state !== 'hold' && guard++ < 400) {
       if (isLayup) {
-        if (!released && d.shot && d.shot.t >= target - 1e-6) { g.input.pressed.add(S); released = true; }
+        // ERRS for a layup is the tap time relative to the release point; the
+        // game holds an early tap until the ball is up, so a negative err
+        // still releases at the top.
+        if (!released && d.shot && d.shot.t >= Math.max(0.01, target) - 1e-6) { g.input.pressed.add(S); released = true; }
       } else if (d.shot && d.shot.t < target - 1e-6) g.input.keys.add(S); else if (!released) { g.input.keys.delete(S); g.input.released.add(S); released = true; }
       g._update(DT); g.input.endFrame();
     }
