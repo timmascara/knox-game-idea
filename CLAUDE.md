@@ -191,11 +191,14 @@ dribbling leaves the bounce path on the floor, by the handle frame's design.
 **Layups are J then K.** Inside `SHOT.layupRange` (2.6 m) of the rim,
 the jump key with the ball is the takeoff (`tryLayupTakeoff`, asked by the
 game before it does a plain hop): the feet leave the floor on that tick at
-`layupJumpSpeed` (4.6 → ~0.6 m, half a second in the air), momentum carries
-the body at the rim (no deceleration: it is airborne from t = 0), the ball
-is scooped from wherever it was to `layupGather` beside the chest and up
-to `layupCarry` beside the head in one hand, palm up, and the camera leans
-into the drive. A *tap* of the shoot key while airborne releases; the
+`layupJumpSpeed` (5.0 → ~0.7 m, 0.55 s in the air), momentum carries the
+body at the rim (no deceleration: it is airborne from t = 0), the ball
+sweeps from wherever it was — hip, or mid-bounce — up the shooting side to
+`layupCarry` beside the head in **one continuous motion** (no set point;
+the first cut paused at a chest-high gather and the ball rushed there and
+stalled, a visible stutter that also tripped the velocity invariant), then
+a short extension (`layupExtension`, 0.30) at the rim, one hand, palm up,
+and the camera leans into the drive. A *tap* of the shoot key while airborne releases; the
 ideal tap is `layupReleaseAfterApex` (0.08 s) past the top of the jump
 (`layupTiming()` in `Shot.js` derives the clock from the jump speed), so
 the natural rhythm is J, then K a third of a second later. Grading is
