@@ -28,6 +28,21 @@ The owner works in short chats, roughly one per feature, tweak or bug. A
 session that ends without updating the repo strands the next one. So before
 you finish **any** piece of work, however small:
 
+0. **Hand the owner a local run terminal with every update, and never merge
+   to `main` without their go-ahead.** They test locally first; `main` is
+   what publishes. End the message with the exact copy-paste block, with
+   this session's branch name filled in:
+
+   ```bash
+   git clone https://github.com/timmascara/knox-game-idea.git   # first time only
+   cd knox-game-idea
+   git fetch origin && git checkout <this session's branch> && git pull
+   npm install
+   npm run dev
+   ```
+
+   A standing instruction from the owner, not a nicety. Only merge to `main`
+   when they say so.
 1. Commit and push. Never leave work sitting only in the working tree.
 2. Update this file. Change *Where we are* if the stage moved, *Next stage* if
    you learned something that changes the plan, and *Decisions already made*
@@ -53,6 +68,9 @@ node scripts/capture.mjs shoot shothands flight net meter   # just the shooting 
 ZONE=green node scripts/shots.mjs          # shot lab: fire a zone from many spots, report outcomes
 ZONE=iron ERRS=0.04,-0.04 SPOTS='[[0,6.5]]' PARAMS='{"ironDepth":0.05}' node scripts/shots.mjs
 ```
+
+Sound files go in `src/assets/audio/` and are picked up automatically; see
+that folder's README and the Audio section below.
 
 `smoke.mjs`, `capture.mjs` and `shots.mjs` all need `npm run preview`
 serving on :4173. There is no GPU here; all run headless Chromium with
@@ -221,11 +239,29 @@ rim after a swish). The same contact drives the swish sound from
 `Game._update` (physical: any ball through the net sounds, a rattled make
 included).
 
-**Audio** is still fully synthesised. The swish is white noise through a
-sweeping bandpass (cord brush) over a lower whoosh (the net body) with a few
-cord snaps; rim is an inharmonic partial set over a thud, velocity-scaled;
-glass is a board thump with a short ring. None of it has been heard by a
-human yet — the sandbox has no audio — so treat the mix as a first draft.
+**Audio: the synths are placeholders and the owner knows it.** They have
+heard them and called them not great, and plan a day of uploading recorded
+assets. So the pipeline is built and verified: **any file dropped into
+`src/assets/audio/` named after a sound plays instead of that synth**, with
+no code change — `swish.wav`, `rim.wav`, plus `rim-2.wav`/`rim-3.wav` as
+extra takes picked at random (never the same twice running).
+`src/audio/Samples.js` globs the folder at build time and lists the
+recognised names; `AudioManager._playSample` is the first line of each sfx
+method and bails out to the synth when there is no file.
+`src/assets/audio/README.md` is written for the owner — the naming table,
+the several-takes trick, where the per-sound gain lives. Unrecognised
+filenames are ignored and warned about in the console.
+
+Verified end to end in headless Chromium with generated test WAVs: files
+decode, sampled sounds take the sample path, unsampled ones fall through,
+takes never repeat back to back. The test files were deleted afterwards —
+do not commit placeholder audio, an empty folder is the correct state.
+
+Do not spend time re-tuning the synths; they are being replaced. Spend it
+on the loader if anything about an upload does not work. The synth versions
+(swish = white noise through a sweeping bandpass over a lower whoosh with
+cord snaps; rim = an inharmonic partial set over a thud; glass = a board
+thump with a ring) stay as the fallback so the game is never silent.
 
 ## The hands
 
@@ -323,17 +359,38 @@ verified headless. Still wanting a verdict from real play:
 
 - The new defaults (right-mouse shoot, Space jump) — or whatever the owner
   rebinds them to.
-- Meter speed and the green window (`SHOT.green`, 0.03 s; the layup window
-  `layupWindow`, 0.09 s).
-- The sounds: nobody has heard the swish / rim / glass synths yet.
-- The layup from the eyes (`node scripts/capture.mjs layup`).
+- The layup: the window (`SHOT.layupWindow`, 0.09 s) and how it reads from
+  the eyes (`node scripts/capture.mjs layup`).
 
-Candidates for stage 3: dunks (the layup machinery is the base — a dunk is
-a layup whose release point is above the rim and whose "launch" is a slam);
-defenders, which is what would give "contested" a meaning; or a
-rebound/chase loop. `solveArc()` in `MathUtils.js` is still unused.
-Reference commit `bb515cf` still has the old layup/dunk code (built on the
-old dribble model; do not paste it back).
+**Contested shooting is the owner's next real want, and it is the bridge to
+multiplayer** — their stated end goal for the game. The ask, in their
+words: how contested a shot was should affect whether it goes in *even on a
+perfect release*. Design notes before anyone builds it:
+
+- This does **not** require randomness, and should not introduce any. A
+  contest value (0 = wide open, 1 = hand in the face) can shift the *aim
+  point* continuously — a contested green drifts off centre by an amount
+  that grows with the contest — so the outcome stays a deterministic
+  function of (timing, contest, geometry). That keeps the existing
+  decision intact and, more importantly, keeps it replayable across a
+  network: same inputs, same result on every client, which is what a
+  multiplayer build needs. A `Math.random()` in the shot would have to
+  become a seeded, replicated PRNG later; not adding it is cheaper.
+- The hook already exists: `DribbleController.contested` (a bool today,
+  should become 0..1), consumed by `zoneForLayup` and `meterSpec`. It is
+  read but never set, because there is nothing to be contested *by*.
+- So the real prerequisite is **defenders** — even one dummy defender with
+  a position and a reach is enough to compute a contest value (distance to
+  the shooter, whether they are between the shooter and the rim, how high
+  their hand is at the release instant).
+
+Candidates for stage 3, in the order that serves the end goal: defenders
+(unlocks contested, and is the thing multiplayer needs anyway); dunks (the
+layup machinery is the base — a dunk is a layup whose release point is
+above the rim and whose "launch" is a slam); or a rebound/chase loop.
+`solveArc()` in `MathUtils.js` is still unused. Reference commit `bb515cf`
+still has the old layup/dunk code (built on the old dribble model; do not
+paste it back).
 
 ## Decisions already made — do not silently reverse
 
@@ -350,6 +407,18 @@ old dribble model; do not paste it back).
 - **Shot outcomes are deterministic by timing zone.** No randomness in the
   aim: a green is always a swish, iron is always back iron and out, and so
   on, exactly as the owner specified. Do not add "realistic" random misses.
+  When contested shooting arrives it must stay deterministic too — contest
+  shifts the aim, it does not roll dice (see *Next*). The game is headed
+  for multiplayer, where a deterministic shot is worth a great deal.
+- **The meter timing is LOCKED.** `SHOT.releaseTime` 0.62 s, `meterTime`
+  0.84 s, `green` ±0.03 s. The owner played it and called it perfect —
+  "I missed enough and made enough, so it's fair". Do not retune these,
+  and do not let a later change to the shot timeline shift them by
+  accident. Anything that changes how long the jumper takes changes the
+  difficulty the owner signed off on.
+- **The synthesised sounds are placeholders awaiting recorded assets.** Drop
+  files in `src/assets/audio/`; see the Audio section. Do not polish the
+  synths.
 - **Controls are rebindable; defaults are shoot = right mouse (hold), jump =
   Space, between = V.** The owner asked for a jump key that feels natural
   while moving, and Space is that key on every FPS, so the shot moved to a

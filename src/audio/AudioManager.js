@@ -1,11 +1,19 @@
 import { clamp } from '../core/MathUtils.js';
+import { loadBytes } from '../core/AssetBytes.js';
+import { collectSampleUrls } from './Samples.js';
 
 /**
- * Fully synthesised audio (Web Audio API) — no asset files, so the game is
- * self-contained and every sound is tunable. Provides basketball impacts (ball,
- * rim, backboard, net swish), player foley (footsteps, shoe squeaks, whistle)
- * and a layered ambience bed (wind + birds or rain). Nothing plays until the
- * context is resumed from a user gesture.
+ * Game audio. Every sound has a synthesised version here (Web Audio, no
+ * files, so the game is self-contained and each sound is tunable): basketball
+ * impacts (ball, rim, backboard, net swish), player foley (footsteps, shoe
+ * squeaks, whistle) and a layered ambience bed (wind + birds or rain).
+ *
+ * **Recorded audio wins when it exists.** Any file dropped into
+ * `src/assets/audio/` named after a sound — `swish.wav`, `rim-2.ogg` — is
+ * played instead of that synth, with no code change; see `Samples.js`. The
+ * synths are the placeholder, not the design.
+ *
+ * Nothing plays until the context is resumed from a user gesture.
  */
 export class AudioManager {
   constructor(settings) {
@@ -34,6 +42,7 @@ export class AudioManager {
       this._noiseBuffer = this._makeNoise(2.0);
       this._whiteBuffer = this._makeWhite(2.0);
       this.ready = true;
+      this._loadSamples();
     } catch (e) {
       this.enabled = false;
     }
@@ -41,6 +50,68 @@ export class AudioManager {
 
   resume() {
     if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+  }
+
+  // --- Recorded audio --------------------------------------------------------
+  /**
+   * Decode every sound file present into `this.samples`. Runs in the
+   * background: until a sound's file is decoded, its synth plays, so a slow
+   * decode never blocks the first bounce.
+   */
+  async _loadSamples() {
+    this.samples = {};
+    this._lastTake = {};
+    const urls = collectSampleUrls();
+    await Promise.all(
+      Object.entries(urls).map(async ([name, list]) => {
+        const takes = [];
+        for (const url of list) {
+          try {
+            const bytes = await loadBytes(url);
+            takes.push(await this.ctx.decodeAudioData(bytes));
+          } catch (e) {
+            console.warn(`[audio] could not decode ${name} (${url}):`, e?.message || e);
+          }
+        }
+        if (takes.length) {
+          this.samples[name] = takes;
+          if (name === 'ambience' && this._amb) this.startAmbience(this._ambOpts || {});
+        }
+      })
+    );
+  }
+
+  /** A take of `name`, never the same one twice in a row. */
+  _take(name) {
+    const takes = this.samples?.[name];
+    if (!takes || !takes.length) return null;
+    if (takes.length === 1) return takes[0];
+    let i = Math.floor(Math.random() * takes.length);
+    if (i === this._lastTake[name]) i = (i + 1) % takes.length;
+    this._lastTake[name] = i;
+    return takes[i];
+  }
+
+  /**
+   * Play the recorded version of `name` if there is one. Returns true when it
+   * did, so each synth can simply bail out.
+   *
+   * `gain` scales with whatever intensity the caller measured; `jitter` is a
+   * small random playback-rate spread that keeps repeated hits from phasing
+   * into one another (set it to 0 for a sound that must not change pitch).
+   */
+  _playSample(name, gain = 1, jitter = 0.04) {
+    if (!this.ready) return false;
+    const buf = this._take(name);
+    if (!buf) return false;
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    if (jitter > 0) src.playbackRate.value = 1 + (Math.random() * 2 - 1) * jitter;
+    const g = this.ctx.createGain();
+    g.gain.value = clamp(gain, 0, 4);
+    src.connect(g).connect(this.sfxBus);
+    src.start();
+    return true;
   }
 
   setVolumes() {
@@ -97,6 +168,7 @@ export class AudioManager {
   bounce(intensity = 1) {
     if (!this.ready) return;
     const v = clamp(intensity, 0.2, 1.6);
+    if (this._playSample('bounce', v * 0.8)) return;
     // Low thump
     const osc = this.ctx.createOscillator();
     osc.type = 'sine';
@@ -121,6 +193,7 @@ export class AudioManager {
   catchBall(intensity = 0.3) {
     if (!this.ready) return;
     const v = clamp(intensity, 0.05, 0.8);
+    if (this._playSample('catch', 0.4 + v)) return;
     const n = this._noiseSource();
     const bp = this.ctx.createBiquadFilter();
     bp.type = 'bandpass';
@@ -140,6 +213,7 @@ export class AudioManager {
   rim(intensity = 0.8) {
     if (!this.ready) return;
     const v = clamp(intensity, 0.2, 1.4);
+    if (this._playSample('rim', v * 0.85)) return;
     const partials = [
       [1180, 0.11, 0.22],
       [1760, 0.07, 0.3],
@@ -178,6 +252,7 @@ export class AudioManager {
   backboard(intensity = 0.8) {
     if (!this.ready) return;
     const v = clamp(intensity, 0.2, 1.4);
+    if (this._playSample('backboard', v * 0.85)) return;
     const o = this.ctx.createOscillator();
     o.type = 'sine';
     o.frequency.setValueAtTime(230, this.ctx.currentTime);
@@ -210,6 +285,9 @@ export class AudioManager {
   swish(intensity = 1) {
     if (!this.ready) return;
     const v = clamp(intensity, 0.3, 1.3);
+    // A swish is the one sound a player hears closely every time, so keep the
+    // pitch spread tiny — a wobbling swish reads as fake at once.
+    if (this._playSample('swish', 0.7 + v * 0.4, 0.02)) return;
     const now = this.ctx.currentTime;
     // Cord brush.
     const n = this._noiseSource(true);
@@ -255,6 +333,7 @@ export class AudioManager {
   /** The ball leaving the fingertips: a barely-there brush of leather. */
   release() {
     if (!this.ready) return;
+    if (this._playSample('release', 0.8)) return;
     const n = this._noiseSource(true);
     const bp = this.ctx.createBiquadFilter();
     bp.type = 'bandpass';
@@ -268,6 +347,7 @@ export class AudioManager {
 
   footstep(intensity = 1) {
     if (!this.ready) return;
+    if (this._playSample('footstep', clamp(intensity, 0.2, 1.4) * 0.9, 0.07)) return;
     const n = this._noiseSource();
     const lp = this.ctx.createBiquadFilter();
     lp.type = 'lowpass';
@@ -280,6 +360,7 @@ export class AudioManager {
 
   squeak() {
     if (!this.ready) return;
+    if (this._playSample('squeak', 0.9, 0.08)) return;
     const o = this.ctx.createOscillator();
     o.type = 'sawtooth';
     const f = 900 + Math.random() * 500;
@@ -296,6 +377,7 @@ export class AudioManager {
 
   whistle() {
     if (!this.ready) return;
+    if (this._playSample('whistle', 1, 0.01)) return;
     const o = this.ctx.createOscillator();
     o.type = 'sine';
     o.frequency.value = 2100;
@@ -316,6 +398,21 @@ export class AudioManager {
     if (!this.ready) return;
     this.stopAmbience();
     this._amb = {};
+    this._ambOpts = { birds, rain };
+
+    // A recorded bed replaces the whole synthesised bed (wind, rain, birds).
+    const bed = this._take('ambience');
+    if (bed) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = bed;
+      src.loop = true;
+      const g = this.ctx.createGain();
+      g.gain.value = 0.9;
+      src.connect(g).connect(this.ambBus);
+      src.start();
+      this._amb.bed = src;
+      return;
+    }
 
     // Wind: filtered brown noise, slowly modulated.
     const wind = this._noiseSource();
@@ -385,6 +482,7 @@ export class AudioManager {
 
   stopAmbience() {
     this._birdsOn = false;
+    this._ambOpts = null;
     if (this._birdTimer) clearTimeout(this._birdTimer);
     if (this._amb) {
       for (const k of Object.keys(this._amb)) {

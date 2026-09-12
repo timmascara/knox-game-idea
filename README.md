@@ -226,6 +226,17 @@ times, sway amplitudes; the ideal release time, the timing windows, entry
 angle, hop and backspin. Changes apply live and are not persisted — when
 something feels right, write it into Constants.
 
+## Sound
+
+Every sound is synthesised in code, so the game is self-contained — but
+those are placeholders. Drop a file into `src/assets/audio/` named after a
+sound (`swish.wav`, `rim.wav`, `bounce-2.ogg` …) and the game plays it
+instead, with no code change; add numbered files for several takes of the
+same sound and it picks between them so repeated hits never phase. See
+[`src/assets/audio/README.md`](src/assets/audio/README.md) for the list of
+names. Sounds with no file keep their synth, so the folder can be filled one
+sound at a time.
+
 ## Not here yet (on purpose)
 
 Dunks, defenders, the park, weather and the scoreboard were removed (or
