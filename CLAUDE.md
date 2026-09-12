@@ -15,7 +15,7 @@ the next thing.
   engine. Deployed, mouse capture confirmed working by the owner.
 - **Stage 2 — shooting. Built, played once by the owner, first feedback
   applied.** A 2K-style jumper with a timing meter, deterministic outcomes
-  by zone, layups inside 2.6 m, a physics net that drops a made ball under
+  by zone, layups inside 2.6 m that go in off the glass, a physics net that drops a made ball under
   the rim, a synthesised swish, a plain jump, and rebindable controls. See
   *Shooting* below. The owner's first-play notes were: a jump key that
   feels right while moving, layups, and the ball not running away after a
@@ -88,13 +88,22 @@ node scripts/capture.mjs poses
 node scripts/capture.mjs shoot shothands flight net meter
 ZONE=green node scripts/shots.mjs
 ZONE=iron ERRS=0.04,-0.04 SPOTS='[[0,6.5]]' PARAMS='{"ironDepth":0.05}' node scripts/shots.mjs
+ZONE=bank ERRS=-0.3,0,0.15,0.19 SPOTS='[[0.5,11.8],[0.3,12.1],[-0.9,11.9],[0.7,12.4],[-0.4,11.7],[0,10.8],[1.5,11.5],[0,9.9],[-2,11.2],[2.2,12.3],[0,10.0],[1.7,10.6]]' node scripts/shots.mjs
+ZONE=bank ERRS=0.15 SPOTS='[[0,10.8]]' TRACE=1 node scripts/shots.mjs
+node scripts/restitution.mjs
 ```
 
 In order: install; the dev server; the production build served on :4173;
 the headless test (run it before every push); contact sheets of every move
 and the jumper into `screenshots/`; the rigged hand in each pose, close up;
-just the shooting captures; the shot lab over a whole timing zone; and the
-shot lab with overrides.
+just the shooting captures; the shot lab over a whole timing zone; the
+shot lab with overrides; the layup bank lab over the twelve takeoff spots
+it is verified from; and a traced run — `TRACE=1` prints the ball's
+position, velocity and net contacts every other tick for each failing row
+(`TRACE=all` for every row), which is how the sub-step restitution bug was
+found. A spot inside layup range is always a layup, whatever `ZONE` says,
+and is graded as a bank. The last line is the Rapier bounce regression
+check (see *Conventions*).
 
 No `#` comments in these blocks on purpose — macOS zsh passes them through
 as arguments, which breaks the command (see rule 0 above).
@@ -102,7 +111,7 @@ as arguments, which breaks the command (see rule 0 above).
 Sound files go in `src/assets/audio/` and are picked up automatically; see
 that folder's README and the Audio section below.
 
-`smoke.mjs`, `capture.mjs` and `shots.mjs` all need `npm run preview`
+`smoke.mjs`, `capture.mjs`, `shots.mjs` and `restitution.mjs` all need `npm run preview`
 serving on :4173. There is no GPU here; all run headless Chromium with
 SwiftShader, and `capture.mjs` is how you review animation without being
 able to play it. `shots.mjs` is how you tune an outcome: it releases at the
@@ -219,12 +228,37 @@ release point is `layupReleaseAfterApex` (0.08 s) past the top of the jump
 tap *before* that is held (`shot.armed`) and the ball leaves at that point,
 a tap after leaves at once — so J then K in any quick succession always
 releases up at the rim with the full animation. **Uncontested, every tap
-while airborne goes in** (`layupWindow` is 9 s, i.e. the whole airtime):
-the owner's call, "jump with J, click K once, make it every time". The
-meter and timing flash are not shown for an uncontested layup — there is
-nothing to time. Contested (`contested` hook) narrows the window to
-`layupContestedWindow` and brings the meter back. No tap before the feet
-land → `_landWithBall`: the ball gathers back into the hold, no shot.
+while airborne goes in, off the glass** (`layupWindow` is 9 s, i.e. the
+whole airtime): the owner's calls, "jump with J, click K once, make it
+every time" and "nobody scores layups as a swish, it's always a bank off
+the backboard" — the first build dropped them softly through the net and
+the owner rejected it, so a made layup is a bank, never a swish, and the
+HUD calls it LAYUP. The meter and timing flash are not shown for an
+uncontested layup — there is nothing to time. Contested (`contested`
+hook) narrows the window to `layupContestedWindow` and brings the meter
+back. No tap before the feet land → `_landWithBall`: the ball gathers back
+into the hold, no shot.
+
+**The bank is an exact carom solve** (`solveBank` in `Shot.js`, zone
+`BANK`, kind-aware `aimFor`). In board axes (normal, lateral, up) the ball
+flies from the hand to a contact point on the glass a chosen height above
+the rim, bounces with Rapier's restitution (0.72, measured) and keeps 5/7
+of its tangential velocity (Rapier's friction brings a solid sphere to
+rolling; measured 0.70–0.71 in-game — ignoring it left wide-angle caroms
+30 % short and on the near iron), and comes down through the rim centre.
+The normal axis fixes the carom time from the flight time, the lateral
+axis is then linear, and one bisection in the flight time makes the
+carom's height hit zero at the centre. Candidate kiss heights are tried
+in order (0.30 m first, up to 0.80 — the board runs to 0.945 above the
+rim); a candidate is rejected if the ball's centre comes within
+`radius + tube + 15 mm` of the ring's centreline anywhere on the way in
+or on the way down (a true 3D distance — the first version used a
+vertical-wall test that rejected every straight-on bank), if it would
+rise through the hoop from below, if the contact is off the glass, or if
+the carom is not clearly descending at the rim. A layup is launched with
+**no backspin** (spin on the glass is a friction kick the model does not
+carry). `solveBank` returning null falls back to the old soft drop; in the
+lab it no longer does from anywhere in layup range.
 
 **The takeoff paces the drive** (`layupStandoff` 1.2 m, `layupLunge`
 2.5 m/s): at J the body's horizontal velocity is set toward the rim so the
@@ -235,15 +269,19 @@ a metre from the rim. Two lessons here: pacing to reach the standoff *at
 the release* left late taps under the rim (the body kept drifting), and a
 0.8 m standoff did the same because of the carry. Before any of this, a
 sprinting drive covered the whole 2.3 m before the tap and released from
-under the rim, where the soft drop goes up through the net and off the
-glass: the owner saw a bank on every layup. Taking off *inside* the
+under the rim, where nothing clean is possible. Taking off *inside* the
 standoff, the takeoff steps back to it instead (`layupFade`, up to 1.5
-m/s — a fade-away) and the ball is carried overhead rather than out front
-(`load.z` shrinks toward 0.18 as the takeoff nears 0.5 m from the rim);
-without both, a takeoff beside the rim still had the ball under it. Lab:
-48/48 from twelve spots, right beside the rim to 2.5 m out, at taps from
-0.3 s early to 0.19 s late; smoke: J-then-K at once, at the top, late,
-from a sprint, and no tap (lands holding the ball). The shoot key near
+m/s — a fade-away, and this one paces to the *release*, since the ball
+must be clear of the front iron when it leaves the hand or no bank can
+rise past it), the ball is carried overhead rather than out front
+(`load.z` shrinks toward 0.18 as the takeoff nears 0.5 m from the rim)
+and higher (`layupReachUp`, +0.2 m at the rim, a full reach-up); without
+all three, a takeoff beside the rim released the ball 7 mm from the front
+tube and the solver rightly refused it. Lab (`ZONE=bank`): 48/48 banks
+from twelve spots, right beside the rim to 2.5 m out, at taps from 0.3 s
+early to 0.19 s late, every one off the glass and through; smoke:
+J-then-K at once, at the top, late, from a sprint (each asserted made
+*with* a board hit), and no tap (lands holding the ball). The shoot key near
 the rim on the ground is *also* a takeoff (so K, K works) rather than a
 no-timing auto-layup, which would have made the window meaningless. The
 first build had the layup as hold-and-release on the shoot key with the
@@ -379,6 +417,18 @@ straightens.
   It defaulted to 1/60 while being stepped 120×/s, so every free ball used
   to run at double speed; the dribble never noticed because it is the
   controller's own maths. Do not remove that call.
+- **Rapier's contact prediction distance is set to 0.5 mm**
+  (`normalizedPredictionDistance` in `Physics.js`; the default is 2 mm).
+  With the default, a step ending with the ball 0.5–2 mm short of a
+  surface makes a "predicted" contact that stops the ball at the surface
+  *without bouncing it*, and the next step bounces the near-zero remainder:
+  measured restitution 0.23–0.42 instead of 0.72 for about one contact
+  phase in five, on every surface (glass, iron, court). It showed up as one
+  bank layup in eight dying on the glass and dropping onto the back iron —
+  identical launch, different sub-step phase. `node scripts/restitution.mjs`
+  is the regression check: it fires the same free ball at the board from
+  eleven sub-step phases and fails unless every one reads 0.72. Penetrating a few mm before the real bounce is corrected
+  positionally and does not change the bounce velocity (verified).
 - `Game._update(dt)` is public so tests can pump the loop deterministically.
 - `window.__game`, `window.__THREE`, `window.__POSES`, `window.__CONST`
   (`{ SHOT, DRIBBLE }`, live) are exposed for the capture, smoke and shot-lab
@@ -444,8 +494,10 @@ verified headless. Still wanting a verdict from real play:
 
 - The new defaults (right-mouse shoot, Space jump) — or whatever the owner
   rebinds them to.
-- The layup: the window (`SHOT.layupWindow`, 0.09 s) and how it reads from
-  the eyes (`node scripts/capture.mjs layup`).
+- The layup as a bank: the kiss height (0.30 m above the rim when the
+  geometry allows, taller from a low or close release), the fade from a
+  takeoff at the rim, and how it reads from the eyes
+  (`node scripts/capture.mjs layup`). Verified headless only.
 
 **Contested shooting is the owner's next real want, and it is the bridge to
 multiplayer** — their stated end goal for the game. The ask, in their
@@ -509,9 +561,12 @@ paste it back).
   right mouse). Nothing reads physical keys except WASD and the menu. Bump
   `BINDINGS_VERSION` when defaults change so saved layouts migrate.
 - **Layups are J (takeoff) then a K tap (release), never a hold, and
-  uncontested they always go in.** Owner's calls: "by then I'm already on
-  the ground" and "jump with J, click K once, make it every time". Timing
-  pressure on a layup only arrives with defenders (the `contested` hook).
+  uncontested they always go in — off the backboard, never a swish.**
+  Owner's calls: "by then I'm already on the ground", "jump with J, click
+  K once, make it every time" and "nobody scores layups as a swish, it's
+  always a bank off the backboard" (the last one was misread the first
+  time as a complaint about banking; it was the spec). Timing pressure on
+  a layup only arrives with defenders (the `contested` hook).
 - **Looking at a nearby ball catches it.** Speed does not matter (below 10
   m/s); the gather absorbs it.
 - **Always right-handed.** The shot gathers into the right hand whichever

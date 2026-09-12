@@ -311,8 +311,7 @@ const result = await page.evaluate(() => {
     ls = layup(tapAt);
     shots.push(`${ls?.kind}:${ls?.zone}:${ls?.result}`);
     check(d.stats.shots.length === before + 1 && ls?.kind === 'layup', `expected one layup, got ${ls?.kind}`);
-    const made = ls?.result === 'swish' || ls?.result === 'made';
-    check(made, `layup tapped at ${tapAt}s (${phase}) should go in, got ${ls?.zone}:${ls?.result}`);
+    check(ls?.result === 'made' && ls?.boardHits > 0, `layup tapped at ${tapAt}s (${phase}) should go in off the glass, got ${ls?.zone}:${ls?.result} (board hits ${ls?.boardHits})`);
     for (let i = 0; i < 300 && !g.player.grounded; i++) tick(1);
   }
   window.__phase = 'layup-notap';

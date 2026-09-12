@@ -19,7 +19,7 @@ const DEG = Math.PI / 180;
 const UP = new THREE.Vector3(0, 1, 0);
 
 /** Where a release landed on the meter, from its signed timing error. */
-export const ZONE = { GREEN: 'green', IRON: 'iron', GLASS: 'glass', AIR: 'air', FRONT: 'front' };
+export const ZONE = { GREEN: 'green', IRON: 'iron', GLASS: 'glass', AIR: 'air', FRONT: 'front', BANK: 'bank' };
 
 export function zoneFor(err) {
   const e = Math.abs(err);
@@ -29,10 +29,10 @@ export function zoneFor(err) {
   return ZONE.AIR;
 }
 
-/** Layups: a wide make window (narrow when contested), otherwise the front iron. */
+/** Layups: a wide make window (narrow when contested) that goes in off the glass, otherwise the front iron. */
 export function zoneForLayup(err, contested = false) {
   const w = contested ? SHOT.layupContestedWindow : SHOT.layupWindow;
-  return Math.abs(err) <= w ? ZONE.GREEN : ZONE.FRONT;
+  return Math.abs(err) <= w ? ZONE.BANK : ZONE.FRONT;
 }
 
 /**
@@ -51,7 +51,7 @@ export function meterSpec(kind, contested = false) {
     return {
       releaseTime,
       meterTime,
-      zones: [[contested ? SHOT.layupContestedWindow : SHOT.layupWindow, ZONE.GREEN], [Infinity, ZONE.FRONT]],
+      zones: [[contested ? SHOT.layupContestedWindow : SHOT.layupWindow, ZONE.BANK], [Infinity, ZONE.FRONT]],
     };
   }
   return {
@@ -67,7 +67,159 @@ export const ZONE_LABEL = {
   [ZONE.GLASS]: 'OFF THE GLASS',
   [ZONE.AIR]: 'AIRBALL',
   [ZONE.FRONT]: 'FRONT RIM',
+  [ZONE.BANK]: 'OFF THE GLASS',
 };
+
+/** ∫₀ᵀ e^{−kt} dt — the drag-damped "effective time" for a horizontal velocity. */
+const E = (T, k) => (k > 1e-6 ? (1 - Math.exp(-k * T)) / k : T);
+
+/**
+ * A bank: the launch from `from` that hits the glass `h` above the rim
+ * plane and whose carom drops through the rim centre. Nothing is tuned by
+ * hand — it is the physics run backward:
+ *
+ *   before the glass   ballistic with drag, from `from` to the contact
+ *   at the glass       normal velocity reversed × e (the Max restitution
+ *                      rule makes e the ball's, 0.72); lateral and vertical
+ *                      carried through
+ *   after the glass    ballistic with drag from the contact, descending
+ *                      through the rim plane at the rim centre
+ *
+ * The lateral axis is uniform motion the whole way, so it decouples. The
+ * normal axis fixes the post-bounce time t from the pre-bounce time T1.
+ * That leaves one equation — the carom's height reaching the rim plane
+ * exactly at the centre — in one unknown, T1, solved by bisection. Tries
+ * a few glass heights and skips any root whose rise would clip the near
+ * iron. Returns null only if nothing works (then the caller falls back to
+ * a soft drop).
+ */
+export function solveBank(from, hoop, opts = {}) {
+  const k = opts.k ?? BALL.linearDamping;
+  const e = opts.restitution ?? BALL.restitution;
+  // Tangential velocity kept through the glass contact. Rapier's friction
+  // brings a solid sphere to rolling, which costs 2/7 of the tangential
+  // speed; measured in-game at 0.70-0.71 for both the lateral and vertical
+  // components. Ignoring it left wide-angle caroms 30 % short and on the
+  // near iron.
+  const tau = opts.tangential ?? 5 / 7;
+  const R = BALL.radius;
+  const rim = hoop.rimCenter;
+  const bn = hoop.getShootDir(); // board normal, toward the court
+  const bs = new THREE.Vector3().crossVectors(bn, UP);
+  const rel = new THREE.Vector3().subVectors(from, rim);
+  const pBn = rel.dot(bn); // distance out from the rim centre, along the normal
+  const pBs = rel.dot(bs); // lateral offset from the rim centre
+  const pY = from.y - rim.y; // height above the rim plane (negative below it)
+  const face = hoop.boardFrontOffset; // rim centre → glass face
+  const cBn = -(face - R); // ball centre at contact, along the normal
+  const travelIn = pBn - cBn; // how far the ball travels toward the glass
+  if (travelIn < 0.15) return null; // already at the glass
+  const a = -G;
+
+  // Preferred kiss heights above the rim first; the taller ones are what a
+  // low, close launch (a late tap after landing, a metre out) needs to arc
+  // over the front iron. All are on the glass: the board runs to 0.945 m
+  // above the rim.
+  const heights = opts.heights || [0.30, 0.24, 0.36, 0.42, 0.18, 0.48, 0.55, 0.62, 0.70, 0.80];
+  const halfW = HOOP.backboardWidth / 2 - R - 0.05; // contact must be on the glass
+  for (const h of heights) {
+    // Vertical after the glass, as a function of T1, at the moment the carom
+    // has come back to the rim centre; we want it to be exactly zero.
+    const evalAt = (T1) => {
+      const E1 = E(T1, k);
+      const vBn0 = travelIn / E1; // toward the glass, launch
+      const vBnC = vBn0 * Math.exp(-k * T1); // at contact
+      const ratio = (k * -cBn) / (e * vBnC); // carom must travel back |cBn| to the centre
+      if (ratio >= 1) return null; // too slow to come back with drag
+      const t = k > 1e-6 ? -Math.log(1 - ratio) / k : -cBn / (e * vBnC);
+      const vY0 = a / k + (h - pY - (a / k) * T1) / E1;
+      const vYC = tau * ((vY0 - a / k) * Math.exp(-k * T1) + a / k); // after the glass
+      const yEnd = h + (a / k) * t + (vYC - a / k) * E(t, k);
+      return { f: yEnd, T1, t, vBn0, vBnC, vY0, vYC, E1 };
+    };
+    // Scan for sign changes, then bisect each bracket; keep the first root
+    // whose path clears the iron on the way in and on the way down.
+    let prev = null;
+    for (let T1 = 0.12; T1 <= 1.4; T1 += 0.02) {
+      const cur = evalAt(T1);
+      if (cur && prev && Math.sign(cur.f) !== Math.sign(prev.f)) {
+        let lo = prev.T1;
+        let hi = cur.T1;
+        let flo = prev.f;
+        for (let i = 0; i < 40; i++) {
+          const mid = 0.5 * (lo + hi);
+          const m = evalAt(mid);
+          if (!m) break;
+          if (Math.sign(m.f) === Math.sign(flo)) {
+            lo = mid;
+            flo = m.f;
+          } else hi = mid;
+        }
+        const root = evalAt(0.5 * (lo + hi));
+        if (root && Math.abs(root.f) < 0.01) {
+          const vBs0 = -pBs / (root.E1 + tau * Math.exp(-k * root.T1) * E(root.t, k));
+          const onGlass = Math.abs(pBs + vBs0 * root.E1) < halfW;
+          const ok = onGlass && bankIsClean(root, { pBn, pBs, vBs0, pY, h, k, e, tau, a, R, cBn, travelIn });
+          if (ok) {
+            const launch = new THREE.Vector3()
+              .addScaledVector(bn, -root.vBn0)
+              .addScaledVector(bs, vBs0);
+            launch.y = root.vY0;
+            const contact = rim.clone().addScaledVector(bn, cBn).addScaledVector(bs, pBs + vBs0 * root.E1);
+            contact.y = rim.y + h;
+            launch.flightTime = root.T1 + root.t;
+            return { launch, contact, h, T1: root.T1, t: root.t };
+          }
+        }
+      }
+      if (cur) prev = cur;
+    }
+  }
+  return null;
+}
+
+/**
+ * The ball's centre stays out of reach of the ring's tube the whole way — in
+ * to the glass and back down to the centre — measured as a true distance to
+ * the tube's centreline, so a ball passing beside the iron and above it is
+ * fine while one skimming it is not. On the way in it also must not rise
+ * through the hoop from below (a ball under the rim goes up through the
+ * net), and the carom is coming down as it reaches the rim plane.
+ */
+function bankIsClean(root, g) {
+  const reach = BALL.radius + HOOP.rimTube + 0.015; // tube centreline to ball centre, with a margin
+  const N = 30;
+  const near = (bn, bs, y) => {
+    const d = Math.hypot(bn, bs);
+    return Math.hypot(d - HOOP.rimRadius, y) < reach;
+  };
+  // In: from the launch point to the glass.
+  for (let i = 1; i < N; i++) {
+    const travel = (g.travelIn * i) / N;
+    const ratio = (g.k * travel) / root.vBn0;
+    if (ratio >= 1) return false;
+    const tt = g.k > 1e-6 ? -Math.log(1 - ratio) / g.k : travel / root.vBn0;
+    const bn = g.pBn - travel;
+    const bs = g.pBs + g.vBs0 * E(tt, g.k);
+    const y = g.pY + (g.a / g.k) * tt + (root.vY0 - g.a / g.k) * E(tt, g.k);
+    if (near(bn, bs, y)) return false;
+    if (Math.hypot(bn, bs) < HOOP.rimRadius && y < g.R) return false; // up through the hoop
+  }
+  // Out: the carom from the glass back to the rim centre.
+  const vBnOut = g.e * root.vBnC; // away from the glass
+  const vBsC = g.tau * g.vBs0 * Math.exp(-g.k * root.T1);
+  const bsC = g.pBs + g.vBs0 * root.E1;
+  for (let i = 1; i < N; i++) {
+    const tt = (root.t * i) / N;
+    const Et = E(tt, g.k);
+    const bn = g.cBn + vBnOut * Et;
+    const bs = bsC + vBsC * Et;
+    const y = g.h + (g.a / g.k) * tt + (root.vYC - g.a / g.k) * Et;
+    if (near(bn, bs, y)) return false;
+  }
+  const vYEnd = (root.vYC - g.a / g.k) * Math.exp(-g.k * root.t) + g.a / g.k;
+  return vYEnd < -0.5;
+}
 
 /**
  * Launch velocity (world) that carries a ball from `from` to `to`, arriving
@@ -145,6 +297,15 @@ export function aimFor(zone, err, hoop, from, kind = 'jumper') {
       // A missed layup: short, onto the front iron, which kicks it away.
       aim.addScaledVector(dir, -(HOOP.rimRadius + SHOT.frontDepth));
       break;
+    case ZONE.BANK: {
+      // A made layup: off the glass and through. The launch is solved
+      // outright; a soft drop is the fallback if no clean bank exists.
+      const bank = solveBank(from, hoop);
+      if (bank) return { aim: bank.contact, entry: 0, dir, side, dist, launch: bank.launch, bank };
+      aim.addScaledVector(dir, SHOT.swishDepth);
+      entry = entryFor(from, aim, entry, SHOT.layupMinApex);
+      return { aim, entry, dir, side, dist };
+    }
     case ZONE.AIR:
     default:
       aim.addScaledVector(dir, -(HOOP.rimRadius + SHOT.airShort));

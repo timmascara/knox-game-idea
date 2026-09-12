@@ -77,8 +77,11 @@ further and it comes off the glass; further still and it is an airball.
 Inside about two and a half metres of the rim, `J` with the ball is a
 layup: you leap at the basket, the ball is scooped up your shooting side,
 and a tap of `K` lets it go at the rim — tap early and it waits for the
-top of the jump. With nobody guarding you it goes in every time; if you
-never tap you come down holding the ball. Every zone is deterministic.
+top of the jump. With nobody guarding you it goes in every time, off the
+glass: the bank is solved exactly (glass restitution, the friction that
+takes 2/7 of the tangential speed, the drop through the rim centre), so it
+kisses the board and falls through from any angle. If you never tap you
+come down holding the ball. Every zone is deterministic.
 The body squares up to the basket by itself and keeps its momentum; your
 head stays free. A made shot drops out of the net and settles under the
 rim. Every key above can be rebound from the pause menu.
@@ -218,8 +221,9 @@ placement): `python3 scripts/rig_hand.py <hand.obj> src/assets/hand_right.glb`
 The smoke test pumps the fixed-step loop through pickup, a pound rhythm,
 every move, sprinting, the low dribble, a buffered combo, a drop and
 chase, five jumpers (a green from the hold, a green pull-up out of a
-running dribble, a late, a very early and a slightly late release), a
-made and a missed layup off a drive, and a plain jump, and asserts: the
+running dribble, a late, a very early and a slightly late release), four
+banked layups off a drive (at once, at the top, late, from a sprint), a
+no-tap landing, and a plain jump, and asserts: the
 ball never dips under the court, its velocity is continuous across catch
 and release and through the whole jumper, the palm stays on the ball while
 carrying and shooting, every move hands off to the intended hand and

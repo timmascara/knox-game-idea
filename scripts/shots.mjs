@@ -24,10 +24,11 @@ page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
 await page.goto('http://127.0.0.1:4173/', { waitUntil: 'load' });
 await page.waitForFunction(() => document.getElementById('loading')?.classList.contains('hidden'), { timeout: 30000 });
 const zone = process.env.ZONE || 'iron';
-const errs = (process.env.ERRS || (zone==='green'?'0.005':zone==='iron'?'0.05,-0.05':zone==='glass'?'0.1,-0.1':'0.2,-0.25')).split(',').map(Number);
+const errs = (process.env.ERRS || (zone==='green'?'0.005':zone==='bank'?'-0.3,0,0.15':zone==='iron'?'0.05,-0.05':zone==='glass'?'0.1,-0.1':'0.2,-0.25')).split(',').map(Number);
 const spots = JSON.parse(process.env.SPOTS || '[[0,6.5],[0,8.5],[3.5,7.5],[-5.5,11.5],[0,3.6],[6.2,12.2],[-2,5],[4.5,10.5],[0,10.8],[-6.5,9.5]]');
 const params = JSON.parse(process.env.PARAMS || '{}');
-const r = await page.evaluate(async ({ spots, errs, params, zone }) => {
+const trace = !!process.env.TRACE;
+const r = await page.evaluate(async ({ spots, errs, params, zone, trace }) => {
   const g = window.__game; const d = g.dribble; g.started = true; g.paused = false; g.menu.hide(); g.hud.show(); g.renderer.setAnimationLoop(null);
   const DT = 1 / 120;
   const tick = (n) => { for (let i = 0; i < n; i++) { g._update(DT); g.input.endFrame(); } };
@@ -59,19 +60,28 @@ const r = await page.evaluate(async ({ spots, errs, params, zone }) => {
       } else if (d.shot && d.shot.t < target - 1e-6) g.input.keys.add(S); else if (!released) { g.input.keys.delete(S); g.input.released.add(S); released = true; }
       g._update(DT); g.input.endFrame();
     }
-    let ft = 0; let maxH = 0; let minBoard = Infinity; let rimPlane = null; let hits = [];
+    let ft = 0; let maxH = 0; let minBoard = Infinity; let rimPlane = null; let hits = []; const path = [];
     while (d.tracker && ft < 900) {
       tick(1); ft++;
       const p = g.ball.position; maxH = Math.max(maxH, p.y);
+      if (trace && ft % 2 === 0) { const t = d.tracker; const bv = g.ball.velocity; path.push([ft, +(p.x).toFixed(3), +(p.y - 3.05).toFixed(3), +(12.425 - p.z).toFixed(3), +bv.x.toFixed(2), +bv.y.toFixed(2), +bv.z.toFixed(2), g.world.netContacts, t ? `${t.rimHits}/${t.boardHits}` : '-']); }
       if (d.tracker && rimPlane === null && d.tracker.rimPlaneOffset !== null) rimPlane = d.tracker.rimPlaneOffset;
       if (d.tracker) { const t = d.tracker; const key = `${t.rimHits}/${t.boardHits}`; if (hits[hits.length-1] !== key) hits.push(key); }
     }
     const ls = d.lastShot;
-    out.push({ spot: [x, z], kind: ls?.kind, err: e, zone: ls?.zone, result: ls?.result, dist: +ls?.dist.toFixed(2), jump: +d.lastReleaseJump.toFixed(2), hits: hits.join(' '), apex: +maxH.toFixed(2), rimPlane: rimPlane === null ? null : +rimPlane.toFixed(3) });
+    out.push({ spot: [x, z], kind: ls?.kind, err: e, zone: ls?.zone, from: ls?.from?.map(v=>+v.toFixed(2)), aim: ls?.aim?.map(v=>+v.toFixed(2)), launch: ls?.launch?.map(v=>+v.toFixed(2)), result: ls?.result, dist: +ls?.dist.toFixed(2), jump: +d.lastReleaseJump.toFixed(2), hits: hits.join(' '), apex: +maxH.toFixed(2), rimPlane: rimPlane === null ? null : +rimPlane.toFixed(3), path: trace ? path : undefined, feet: [+g.player.position.x.toFixed(2), +g.player.position.z.toFixed(2)] });
   }
   return out;
-}, { spots, errs, params, zone });
+}, { spots, errs, params, zone, trace });
 let good = 0;
-for (const row of r) { const ok = (zone === 'green' && row.result === 'swish') || (zone !== 'green' && row.result === zone); good += ok; console.log((ok ? '  ' : '✗ ') + JSON.stringify(row)); }
+for (const row of r) {
+  const lastHits = (row.hits || '').split(' ').pop() || '0/0';
+  const boardHit = Number(lastHits.split('/')[1] || 0) > 0;
+  // A spot inside layup range grades as a bank whatever zone was asked for.
+  const z = row.zone === 'bank' ? 'bank' : zone;
+  const ok = (z === 'green' && row.result === 'swish') || (z === 'bank' && row.result === 'made' && boardHit) || (z !== 'green' && z !== 'bank' && row.result === z);
+  good += ok; const { path, ...rest } = row; console.log((ok ? '  ' : '✗ ') + JSON.stringify(rest));
+  if (path && (!ok || process.env.TRACE === 'all')) for (const p of path) console.log('    ', JSON.stringify(p));
+}
 console.log(`${zone}: ${good}/${r.length} correct`, errors.length ? errors : '');
 await browser.close();

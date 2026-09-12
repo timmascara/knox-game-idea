@@ -16,6 +16,7 @@ const COLORS = {
   glass: '#e8892a',
   air: '#e0483a',
   front: '#e0483a',
+  bank: '#46c66b',
 };
 
 export class ShotMeter {
@@ -128,7 +129,7 @@ export class ShotMeter {
     const yOf = (u) => top + bh * (1 - u);
     for (const [u0, u1, zone] of this._bands) {
       const lit = this.state === 'result' ? (zone === this.zone && this.releaseU >= u0 && this.releaseU <= u1) : true;
-      const a = zone === 'green' ? (lit ? 0.95 : 0.35) : lit ? (this.state === 'result' ? 0.9 : 0.42) : 0.14;
+      const a = zone === 'green' || zone === 'bank' ? (lit ? 0.95 : 0.35) : lit ? (this.state === 'result' ? 0.9 : 0.42) : 0.14;
       c.fillStyle = this._rgba(COLORS[zone], a);
       const y1 = yOf(u1);
       const y0 = yOf(u0);

@@ -742,8 +742,12 @@ export class DribbleController {
       // Inside the standoff there is no room: the takeoff steps *back* to it
       // (a fade-away, capped at `layupFade`), or the ball would be carried
       // under the rim and the toss would go up into the iron.
+      // The fade paces to the *release* rather than the landing: from a
+      // takeoff at the rim the ball has to be clear of the front iron when
+      // it leaves the hand, or no bank can rise past it.
       const dist = Math.hypot(hoop.rimCenter.x - feet.x, hoop.rimCenter.z - feet.z);
-      const want = (dist - SHOT.layupStandoff) / spec.meterTime;
+      const short = dist - SHOT.layupStandoff;
+      const want = short / (short >= 0 ? spec.meterTime : spec.releaseTime);
       const cur = Math.hypot(this.player.velocity.x, this.player.velocity.z);
       const speed = want >= 0 ? Math.min(want, Math.max(cur, SHOT.layupLunge)) : Math.max(want, -SHOT.layupFade);
       this.player.velocity.set(ax.fwd.x * speed, 0, ax.fwd.z * speed);
@@ -772,6 +776,10 @@ export class DribbleController {
       const distNow = Math.hypot(hoop.rimCenter.x - feet.x, hoop.rimCenter.z - feet.z);
       const room = clamp((distNow - 0.5) / (SHOT.layupStandoff - 0.5), 0, 1);
       load.z = 0.18 + (SHOT.layupCarry[2] - 0.18) * room;
+      // …and reach higher: from beside the rim the ball leaves the hand only
+      // a few centimetres from the front iron, and a bank has to rise past
+      // it. A fully extended reach-up is what a player does there anyway.
+      load.y += SHOT.layupReachUp * (1 - room);
     }
     // The extension runs along the launch direction, which depends on where
     // the extension ends: a couple of fixed-point iterations settle it.
@@ -781,8 +789,8 @@ export class DribbleController {
     for (let i = 0; i < 3; i++) {
       rel = load.clone().addScaledVector(dirL, spec.extension);
       const relW = toWorldA(rel);
-      const { aim, entry, dir } = aimFor(ZONE.GREEN, 0, hoop, relW, kind);
-      launch = solveLaunch(relW, aim, entry) || new THREE.Vector3(dir.x * 3, 5, dir.z * 3);
+      const info = aimFor(kind === 'layup' ? ZONE.BANK : ZONE.GREEN, 0, hoop, relW, kind);
+      launch = info.launch ? info.launch.clone() : solveLaunch(relW, info.aim, info.entry) || new THREE.Vector3(info.dir.x * 3, 5, info.dir.z * 3);
       // The frame carries the body's velocity into the launch.
       launch.x -= canJump ? Math.max(0, sp - spec.decel * tJump) * (pv.x / Math.max(sp, 1e-6)) : 0;
       launch.z -= canJump ? Math.max(0, sp - spec.decel * tJump) * (pv.z / Math.max(sp, 1e-6)) : 0;
@@ -936,7 +944,7 @@ export class DribbleController {
       pEndW.z += pv.z * tau;
       pEndW.y += dy;
       info = aimFor(zone, err, s.hoop, pEndW, s.kind);
-      const launch = solveLaunch(pEndW, info.aim, info.entry) || new THREE.Vector3(info.dir.x * 3, 5, info.dir.z * 3);
+      const launch = info.launch ? info.launch.clone() : solveLaunch(pEndW, info.aim, info.entry) || new THREE.Vector3(info.dir.x * 3, 5, info.dir.z * 3);
       vEnd = this.dirToLocal(launch.sub(frameVel));
     }
     s.flick = new Contact([
@@ -974,9 +982,12 @@ export class DribbleController {
     const s = this.shot;
     this.toWorld(this.ballLocal, this.ballWorld);
     const from = this.ballWorld.clone();
-    const { aim, entry, dir, side, dist } = aimFor(s.zone, s.err, s.hoop, from, s.kind);
-    const launch = solveLaunch(from, aim, entry) || new THREE.Vector3(dir.x * 3, 5, dir.z * 3);
-    const spin = side.clone().multiplyScalar(s.kind === 'layup' ? SHOT.backspin * 0.5 : SHOT.backspin);
+    const info = aimFor(s.zone, s.err, s.hoop, from, s.kind);
+    const { aim, entry, dir, side, dist } = info;
+    const launch = info.launch ? info.launch.clone() : solveLaunch(from, aim, entry) || new THREE.Vector3(dir.x * 3, 5, dir.z * 3);
+    // A bank is solved without spin: backspin on the glass adds a friction
+    // kick the model does not carry, and it dropped the carom short.
+    const spin = side.clone().multiplyScalar(s.kind === 'layup' ? 0 : SHOT.backspin);
     // Continuity stat: what the hand was doing at the release instant (the
     // flick's end velocity, plus the body carrying it) against what the ball
     // was given. The flick was planned to make these equal.
@@ -1030,7 +1041,11 @@ export class DribbleController {
   _onShotResult(r) {
     const t = this.tracker;
     this.tracker = null;
-    if (this.lastShot) this.lastShot.result = r;
+    if (this.lastShot) {
+      this.lastShot.result = r;
+      this.lastShot.rimHits = t?.rimHits ?? 0;
+      this.lastShot.boardHits = t?.boardHits ?? 0;
+    }
     const made = r === 'swish' || r === 'made';
     if (made) this.stats.made++;
     const label = made && this.lastShot?.kind === 'layup' ? 'LAYUP' : RESULT_LABEL[r] || r;

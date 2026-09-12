@@ -194,6 +194,7 @@ export const SHOT = {
   // extends at the rim. No pause on the way: a stop at the chest made the
   // ball rush and stall, which read as a stutter.
   layupCarry: [0.24, 1.92, 0.46], // beside the head, where the extension starts
+  layupReachUp: 0.2, // extra carry height for a takeoff right at the rim (scaled in over the standoff)
   layupCarrySpeed: 2.6, // ball speed passing the carry point, into the extension
   layupExtension: 0.30, // shorter than the jumper's: a flick at the rim, not a full arm
   layupMinApex: 0.35, // the soft drop peaks this far above the rim
