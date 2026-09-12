@@ -15,6 +15,7 @@ const COLORS = {
   iron: '#e7c93c',
   glass: '#e8892a',
   air: '#e0483a',
+  front: '#e0483a',
 };
 
 export class ShotMeter {
@@ -37,28 +38,36 @@ export class ShotMeter {
     this.releaseU = null;
     this.zone = null;
     this.timer = 0;
-    this._bands = this._computeBands();
+    this.spec = { releaseTime: SHOT.releaseTime, meterTime: SHOT.meterTime, zones: [[SHOT.green, 'green'], [SHOT.iron, 'iron'], [SHOT.glass, 'glass'], [Infinity, 'air']] };
+    this._bands = this._computeBands(this.spec);
   }
 
-  /** Bands as [u0, u1, zone] along the meter (u = t / meterTime). */
-  _computeBands() {
-    const k = 1 / SHOT.meterTime;
-    const ui = SHOT.releaseTime * k;
-    const g = SHOT.green * k;
-    const i = SHOT.iron * k;
-    const gl = SHOT.glass * k;
-    return [
-      [0, ui - gl, 'air'],
-      [ui - gl, ui - i, 'glass'],
-      [ui - i, ui - g, 'iron'],
-      [ui - g, ui + g, 'green'],
-      [ui + g, ui + i, 'iron'],
-      [ui + i, ui + gl, 'glass'],
-      [ui + gl, 1, 'air'],
-    ];
+  /**
+   * Bands as [u0, u1, zone] along the meter (u = t / meterTime), from a spec
+   * { releaseTime, meterTime, zones: [[maxAbsError, zone] …] } listed outward
+   * from the ideal; the last zone's error may be Infinity.
+   */
+  _computeBands(spec) {
+    const k = 1 / spec.meterTime;
+    const ui = spec.releaseTime * k;
+    const bands = [];
+    let inner = 0;
+    for (const [maxErr, zone] of spec.zones) {
+      const outer = Number.isFinite(maxErr) ? maxErr * k : Infinity;
+      bands.push([Math.max(0, ui - Math.min(outer, ui)), ui - inner, zone]); // early side
+      bands.push([ui + inner, Math.min(1, ui + outer), zone]); // late side
+      inner = outer;
+      if (!Number.isFinite(maxErr)) break;
+    }
+    return bands.filter(([a, b]) => b > a);
   }
 
-  show() {
+  /** Start filling. `spec` (see _computeBands) describes this kind of shot. */
+  show(spec = null) {
+    if (spec) {
+      this.spec = spec;
+      this._bands = this._computeBands(spec);
+    }
     this.state = 'active';
     this.u = 0;
     this.releaseU = null;
@@ -126,7 +135,7 @@ export class ShotMeter {
       c.fillRect(bx, y1, bw, Math.max(1, y0 - y1));
     }
     // Ideal line through the green.
-    const ui = SHOT.releaseTime / SHOT.meterTime;
+    const ui = this.spec.releaseTime / this.spec.meterTime;
     c.fillStyle = 'rgba(255,255,255,0.75)';
     c.fillRect(bx, yOf(ui) - 0.5, bw, 1);
 

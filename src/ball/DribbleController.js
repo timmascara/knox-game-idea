@@ -5,7 +5,7 @@ import { MOVES, makeContext } from './Moves.js';
 import { HAND_POSES } from '../player/HandModel.js';
 import { DRIBBLE as D, BALL, SHOT, PLAYER } from '../core/Constants.js';
 import { clamp, damp, angleDelta, smoothstep } from '../core/MathUtils.js';
-import { ZONE, zoneFor, aimFor, solveLaunch, ShotTracker, RESULT_LABEL, yawToward } from './Shot.js';
+import { ZONE, zoneFor, zoneForLayup, meterSpec, aimFor, solveLaunch, ShotTracker, RESULT_LABEL, yawToward } from './Shot.js';
 
 /**
  * The dribble engine. Owns possession (loose / gather / hold / dribbling),
@@ -65,6 +65,8 @@ export class DribbleController {
     this.ballVelWorld = new THREE.Vector3(); // measured, for the release continuity stat
     this._prevBallWorld = null;
     this.lastShot = null; // { zone, err, result, ... } for the HUD and tests
+    this.contested = false; // hook: a defender at the rim tightens the layup window (nothing sets it yet)
+    this.hints = { loose: '', hold: '' }; // set by the game from the bindings
 
     this.state = State.LOOSE;
     this.sign = 1; // hand with the ball: +1 right, -1 left
@@ -79,6 +81,8 @@ export class DribbleController {
     this._comboTimer = 0;
 
     this.frame = { pos: new THREE.Vector3(), yaw: 0 };
+    this.frameVel = new THREE.Vector3(); // measured motion of the frame origin (world, m/s)
+    this._prevFramePos = null;
     this._fwd = new THREE.Vector3(0, 0, -1);
     this._right = new THREE.Vector3(1, 0, 0);
 
@@ -123,6 +127,11 @@ export class DribbleController {
     const y = this.frame.yaw;
     this._fwd.set(-Math.sin(y), 0, -Math.cos(y));
     this._right.set(Math.cos(y), 0, -Math.sin(y));
+    // The frame trails the feet, so its velocity is not the feet's while they
+    // accelerate; the release maths needs the real thing.
+    if (this._prevFramePos && dt > 0 && !snap) this.frameVel.subVectors(this.frame.pos, this._prevFramePos).divideScalar(dt);
+    else this.frameVel.set(this.player.velocity.x, 0, this.player.velocity.z);
+    this._prevFramePos = (this._prevFramePos || new THREE.Vector3()).copy(this.frame.pos);
   }
 
   toWorld(local, out = new THREE.Vector3()) {
@@ -227,50 +236,50 @@ export class DribbleController {
   // ---------------------------------------------------------------------------
   _handleInput(input) {
     if (!input) return;
-    this.low = input.isDown('KeyC');
+    this.low = input.down('low');
 
     if (this.state === State.LOOSE) {
-      if (input.wasPressed('KeyE')) this._tryPickup(2.0, 4.5);
+      if (input.pressedAction('pickup')) this._tryPickup(2.0, 4.5);
       return;
     }
     if (this.state === State.SHOT) {
       // Button-up is the release. A tap (already up when the shot began)
       // releases at once — a terrible early shot, as it should be.
-      if (input.wasReleased('Space') || !input.isDown('Space')) this._releaseShot();
+      if (input.releasedAction('shoot') || !input.down('shoot')) this._releaseShot();
       return;
     }
     if (this.state === State.RELEASE) return;
 
-    if (input.wasPressed('Space')) {
+    if (input.pressedAction('shoot')) {
       if (this.state === State.GATHER) this._shotPending = 0.6;
-      else this._startShot();
+      else this._requestShot();
       return;
     }
     if (this.state === State.GATHER) return;
 
-    if (input.wasPressed('KeyG')) {
+    if (input.pressedAction('drop')) {
       this._drop();
       return;
     }
 
     if (this.state === State.HOLD) {
-      if (input.mousePressed?.left) this._startDribble(1);
-      else if (input.mousePressed?.right) this._startDribble(-1);
-      else if (input.wasPressed('KeyE')) this._startDribble(this.sign);
+      if (input.pressedAction('crossover')) this._startDribble(1);
+      else if (input.pressedAction('between')) this._startDribble(-1);
+      else if (input.pressedAction('pickup')) this._startDribble(this.sign);
       return;
     }
 
     // Dribbling.
-    if (input.wasPressed('KeyE')) {
+    if (input.pressedAction('pickup')) {
       this._pickUpFromDribble();
       return;
     }
     let move = null;
-    if (input.mousePressed?.left) move = input.isDown('KeyS') ? 'stepback' : 'crossover';
-    else if (input.mousePressed?.right) move = 'between';
-    else if (input.wasPressed('KeyQ')) move = 'behind';
-    else if (input.wasPressed('KeyF')) move = 'inout';
-    else if (input.wasPressed('KeyR')) move = 'hesitation';
+    if (input.pressedAction('crossover')) move = input.isDown('KeyS') ? 'stepback' : 'crossover';
+    else if (input.pressedAction('between')) move = 'between';
+    else if (input.pressedAction('behind')) move = 'behind';
+    else if (input.pressedAction('inout')) move = 'inout';
+    else if (input.pressedAction('hesitation')) move = 'hesitation';
     if (move) this.queueMove(move);
   }
 
@@ -333,7 +342,7 @@ export class DribbleController {
     // Drive from the real ball state this very tick (no stale frame).
     this.ballLocal.copy(p0);
     this.ballVelLocal.copy(vl);
-    this.hud?.setHint('Left click: dribble right · Right click: dribble left · G: drop');
+    this.hud?.setHint(this.hints.hold);
   }
 
   _updateGather(dt) {
@@ -350,7 +359,7 @@ export class DribbleController {
       this.audio?.catchBall(0.5);
       if (this._shotPending > 0) {
         this._shotPending = 0;
-        this._startShot();
+        this._requestShot();
       }
     }
   }
@@ -378,7 +387,7 @@ export class DribbleController {
     this.plan = null;
     this.flight = null;
     this.queue.length = 0;
-    this.hud?.setHint('Left click: dribble right · Right click: dribble left · G: drop');
+    this.hud?.setHint(this.hints.hold);
   }
 
   _drop() {
@@ -395,7 +404,7 @@ export class DribbleController {
     this.flight = null;
     this.contact = null;
     this.queue.length = 0;
-    this.hud?.setHint('Walk into the ball to pick it up · E to grab');
+    this.hud?.setHint(this.hints.loose);
   }
 
   // ---------------------------------------------------------------------------
@@ -575,81 +584,153 @@ export class DribbleController {
     };
   }
 
-  _startShot() {
+  /** The shoot button: a layup inside `layupRange` of the rim, else the jumper. */
+  _requestShot() {
     if (this.state === State.LOOSE || this.state === State.GATHER || this.shot) return;
     const hoop = this._pickHoop();
     if (!hoop) return;
+    const feet = this.player.position;
+    const dist = Math.hypot(hoop.rimCenter.x - feet.x, hoop.rimCenter.z - feet.z);
+    this._startShot(dist < SHOT.layupRange ? 'layup' : 'jumper', hoop);
+  }
+
+  /**
+   * What differs between a jumper and a layup: the timeline, where the ball
+   * is carried, how hard the hop is, how much momentum the feet keep, the
+   * hand's contact directions, and how the timing is graded.
+   */
+  _shotSpec(kind) {
+    if (kind === 'layup') {
+      return {
+        kind,
+        setTime: SHOT.layupSetTime,
+        releaseTime: SHOT.layupReleaseTime,
+        meterTime: SHOT.layupMeterTime,
+        jumpSpeed: SHOT.layupJumpSpeed,
+        set: SHOT.layupPoint,
+        load: SHOT.layupCarry,
+        extension: SHOT.layupExtension,
+        decel: SHOT.layupDecel,
+        // One hand under the ball, palm up: a finger roll.
+        dirSet: dirOf(0.05, -0.9, -0.43),
+        dirLoad: dirOf(0.03, -0.93, -0.36),
+        dirRel: dirOf(0, -0.96, -0.28),
+        fingers: (u) => _v2.set(0.05, 0.6, 0.8),
+        zoneFn: (err) => zoneForLayup(err, this.contested),
+        meter: meterSpec('layup', this.contested),
+      };
+    }
+    return {
+      kind: 'jumper',
+      setTime: SHOT.setTime,
+      releaseTime: SHOT.releaseTime,
+      meterTime: SHOT.meterTime,
+      jumpSpeed: SHOT.jumpSpeed,
+      set: SHOT.setPoint,
+      load: SHOT.loadPoint,
+      extension: SHOT.extension,
+      decel: PLAYER.shotDecel,
+      dirSet: dirOf(0.15, -0.72, -0.68),
+      dirLoad: dirOf(0.08, -0.8, -0.6),
+      dirRel: dirOf(0.02, -0.88, -0.47),
+      // Fingers straight up the back of the ball at the set (wrist cocked,
+      // forearm vertical beneath it), rolling forward toward the rim as the
+      // arm extends: the wrist snap. (An up-forward hint at the set is nearly
+      // anti-parallel to the contact normal and degenerates.)
+      fingers: (u) => _v2.set(0.02 + 0.03 * u, 1 - 0.2 * u, -0.35 + 0.9 * u),
+      zoneFn: zoneFor,
+      meter: meterSpec('jumper'),
+    };
+  }
+
+  _startShot(kind = 'jumper', hoop = null) {
+    if (this.state === State.LOOSE || this.state === State.GATHER || this.shot) return;
+    hoop = hoop || this._pickHoop();
+    if (!hoop) return;
+    const spec = this._shotSpec(kind);
     const feet = this.player.position;
     this._aimYaw = yawToward(feet, hoop.rimCenter);
     this._shooting = true;
     this._ft = null;
     this.player.lockMove = true;
+    this.player.lockDecel = spec.decel;
 
-    // Where the frame will be at the ideal release: the feet after coming to
-    // a stop, at the apex of the hop, squared up to the basket.
+    // Where the frame will be at the ideal release: the feet after slowing
+    // (or not — a layup keeps its momentum) through the grounded part of the
+    // timeline and drifting through the hop, at the apex, squared up.
     const ax = this._axesAt(this._aimYaw);
     const pv = this.player.velocity;
     const sp = Math.hypot(pv.x, pv.z);
-    const origin = new THREE.Vector3(feet.x, feet.y, feet.z);
-    if (sp > 0.05) origin.addScaledVector(_v.set(pv.x / sp, 0, pv.z / sp), (sp * sp) / (2 * PLAYER.deaccel));
     const canJump = this.player.grounded;
-    if (canJump) origin.y += (SHOT.jumpSpeed * SHOT.jumpSpeed) / (2 * -PLAYER.gravity);
+    const tJump = spec.releaseTime - spec.jumpSpeed / -PLAYER.gravity;
+    const origin = new THREE.Vector3(feet.x, feet.y, feet.z);
+    if (sp > 0.05) {
+      const a = spec.decel;
+      const tStop = a > 1e-3 ? sp / a : Infinity;
+      const tG = Math.min(canJump ? tJump : spec.releaseTime, tStop);
+      let drift = sp * tG - 0.5 * a * tG * tG;
+      if (canJump) drift += Math.max(0, sp - a * tG) * (spec.releaseTime - tJump);
+      origin.addScaledVector(_v.set(pv.x / sp, 0, pv.z / sp), drift);
+    }
+    if (canJump) origin.y += (spec.jumpSpeed * spec.jumpSpeed) / (2 * -PLAYER.gravity);
     const toWorldA = (l) => new THREE.Vector3(origin.x, origin.y + l.y, origin.z).addScaledVector(ax.right, l.x).addScaledVector(ax.fwd, l.z);
     const toLocalA = (w) => new THREE.Vector3(w.dot(ax.right), w.y, w.dot(ax.fwd));
 
-    const set = new THREE.Vector3().fromArray(SHOT.setPoint);
-    const load = new THREE.Vector3().fromArray(SHOT.loadPoint);
+    const set = new THREE.Vector3().fromArray(spec.set);
+    const load = new THREE.Vector3().fromArray(spec.load);
     // The extension runs along the launch direction, which depends on where
     // the extension ends: a couple of fixed-point iterations settle it.
     let dirL = new THREE.Vector3(0, 0.75, 0.66).normalize();
     let rel = null;
     let launch = null;
     for (let i = 0; i < 3; i++) {
-      rel = load.clone().addScaledVector(dirL, SHOT.extension);
+      rel = load.clone().addScaledVector(dirL, spec.extension);
       const relW = toWorldA(rel);
-      const { aim, entry, dir } = aimFor(ZONE.GREEN, 0, hoop, relW);
+      const { aim, entry, dir } = aimFor(ZONE.GREEN, 0, hoop, relW, kind);
       launch = solveLaunch(relW, aim, entry) || new THREE.Vector3(dir.x * 3, 5, dir.z * 3);
+      // The frame carries the body's velocity into the launch.
+      launch.x -= canJump ? Math.max(0, sp - spec.decel * tJump) * (pv.x / Math.max(sp, 1e-6)) : 0;
+      launch.z -= canJump ? Math.max(0, sp - spec.decel * tJump) * (pv.z / Math.max(sp, 1e-6)) : 0;
       dirL = toLocalA(launch).normalize();
     }
     const vRel = toLocalA(launch);
     const speed = vRel.length();
     // Constant-acceleration extension: its duration follows from its length
     // and the speeds at either end, so the arm snaps harder for a long shot.
-    const tau = clamp((2 * SHOT.extension) / (SHOT.loadSpeed + speed), 0.06, 0.2);
-    const tLoad = SHOT.releaseTime - tau;
+    const tau = clamp((2 * spec.extension) / (SHOT.loadSpeed + speed), 0.06, 0.2);
+    const tLoad = spec.releaseTime - tau;
 
     const p0 = this.ballLocal.clone();
     const v0 = this.ballVelLocal.clone();
     p0.y = Math.max(p0.y, this.floorLocal + 0.02);
-    const tSet = clamp(0.18 + p0.distanceTo(set) * 0.14 + v0.length() * 0.015, SHOT.setTime - 0.04, tLoad - 0.14);
+    const tSet = clamp(0.14 + p0.distanceTo(set) * 0.14 + v0.length() * 0.015, spec.setTime - 0.04, tLoad - 0.12);
     // Hand contact direction at the start: wherever the carrying hand is now.
     let dir0;
     if (this.state === State.CONTACT && this.contact) dir0 = this.contact.dirAt(this.t, new THREE.Vector3());
     else if (this.state === State.FLIGHT && this.plan) dir0 = this.plan.catchDir.clone();
     else dir0 = dirOf(0.92, -0.18, -0.28);
-    const dirSet = dirOf(0.15, -0.72, -0.68);
-    const dirLoad = dirOf(0.08, -0.8, -0.6);
-    const dirRel = dirOf(0.02, -0.88, -0.47);
     const over = rel.clone().addScaledVector(dirL, 0.08);
     const path = new Contact([
       { p: p0, v: v0, t: 0, dir: dir0 },
-      { p: set, v: new THREE.Vector3(0, 0.5, 0), t: tSet, dir: dirSet },
-      { p: load, v: dirL.clone().multiplyScalar(SHOT.loadSpeed), t: tLoad, dir: dirLoad },
-      { p: rel, v: vRel, t: SHOT.releaseTime, dir: dirRel },
-      { p: over, v: new THREE.Vector3(), t: SHOT.releaseTime + SHOT.overhold, dir: dirRel },
+      { p: set, v: new THREE.Vector3(0, 0.5, 0), t: tSet, dir: spec.dirSet },
+      { p: load, v: dirL.clone().multiplyScalar(SHOT.loadSpeed), t: tLoad, dir: spec.dirLoad },
+      { p: rel, v: vRel, t: spec.releaseTime, dir: spec.dirRel },
+      { p: over, v: new THREE.Vector3(), t: spec.releaseTime + SHOT.overhold, dir: spec.dirRel },
     ]);
 
     this.shot = {
+      kind,
+      spec,
       hoop,
       t: 0,
       path,
       tSet,
       tLoad,
-      tJump: SHOT.releaseTime - SHOT.jumpSpeed / -PLAYER.gravity,
+      tJump,
       jumped: !canJump,
       dirL,
       relLocal: rel,
-      dirRel,
+      dirRel: spec.dirRel,
       fromDribble: this.dribbling,
       groundY: feet.y,
       zone: null,
@@ -666,7 +747,7 @@ export class DribbleController {
     this.sign = 1;
     this.hud?.setHand(1);
     this.hud?.setHint(null);
-    this.hud?.meter?.show();
+    this.hud?.meter?.show(spec.meter);
   }
 
   _updateShot(dt) {
@@ -675,25 +756,25 @@ export class DribbleController {
     this.t = s.t;
     if (!s.jumped && s.t >= s.tJump) {
       s.jumped = true;
-      if (this.player.jump(SHOT.jumpSpeed)) this.audio?.footstep(0.7);
+      if (this.player.jump(s.spec.jumpSpeed)) this.audio?.footstep(0.7);
     }
     s.path.positionAt(s.t, this.ballLocal);
     if (s.t >= s.path.T) this.ballVelLocal.set(0, 0, 0);
     else s.path.velocityAt(s.t, this.ballVelLocal);
     this.ballLocal.y = Math.max(this.ballLocal.y, this.floorLocal);
-    this.hud?.meter?.set(s.t / SHOT.meterTime);
-    if (s.t >= SHOT.meterTime) this._releaseShot();
+    this.hud?.meter?.set(s.t / s.spec.meterTime);
+    if (s.t >= s.spec.meterTime) this._releaseShot();
   }
 
   /** Button-up: grade the timing, aim for that outcome, plan the flick. */
   _releaseShot() {
     const s = this.shot;
     if (!s || this.state !== State.SHOT) return;
-    const err = s.t - SHOT.releaseTime;
-    const zone = zoneFor(err);
+    const err = s.t - s.spec.releaseTime;
+    const zone = s.spec.zoneFn(err);
     const p = this.ballLocal.clone();
     const v = this.ballVelLocal.clone();
-    const pv = this.player.velocity;
+    const pv = this.frameVel;
     let vEnd = v.length() > 0.5 ? v.clone() : s.dirL.clone().multiplyScalar(0.5);
     let pEnd = null;
     let tau = 0.06;
@@ -720,7 +801,7 @@ export class DribbleController {
       pEndW.x += pv.x * tau;
       pEndW.z += pv.z * tau;
       pEndW.y += dy;
-      info = aimFor(zone, err, s.hoop, pEndW);
+      info = aimFor(zone, err, s.hoop, pEndW, s.kind);
       const launch = solveLaunch(pEndW, info.aim, info.entry) || new THREE.Vector3(info.dir.x * 3, 5, info.dir.z * 3);
       vEnd = this.dirToLocal(launch.sub(frameVel));
     }
@@ -733,8 +814,8 @@ export class DribbleController {
     s.tRelease = s.t;
     this.state = State.RELEASE;
     this.t = 0;
-    this.hud?.meter?.release(s.tRelease / SHOT.meterTime, zone, err);
-    this.hud?.flashTiming?.(zone, err);
+    this.hud?.meter?.release(s.tRelease / s.spec.meterTime, zone, err);
+    this.hud?.flashTiming?.(zone, err, s.kind);
   }
 
   _updateRelease(dt) {
@@ -759,16 +840,15 @@ export class DribbleController {
     const s = this.shot;
     this.toWorld(this.ballLocal, this.ballWorld);
     const from = this.ballWorld.clone();
-    const { aim, entry, dir, side, dist } = aimFor(s.zone, s.err, s.hoop, from);
+    const { aim, entry, dir, side, dist } = aimFor(s.zone, s.err, s.hoop, from, s.kind);
     const launch = solveLaunch(from, aim, entry) || new THREE.Vector3(dir.x * 3, 5, dir.z * 3);
-    const spin = side.clone().multiplyScalar(SHOT.backspin);
+    const spin = side.clone().multiplyScalar(s.kind === 'layup' ? SHOT.backspin * 0.5 : SHOT.backspin);
     // Continuity stat: what the hand was doing at the release instant (the
     // flick's end velocity, plus the body carrying it) against what the ball
     // was given. The flick was planned to make these equal.
-    const pv = this.player.velocity;
     const hand = this.dirToWorld(this.ballVelLocal, _v);
-    hand.x += pv.x;
-    hand.z += pv.z;
+    hand.x += this.frameVel.x;
+    hand.z += this.frameVel.z;
     if (!this.player.grounded) hand.y += this.player.vy;
     this.lastReleaseJump = hand.distanceTo(launch);
     this.stats.maxReleaseJump = Math.max(this.stats.maxReleaseJump, this.lastReleaseJump);
@@ -791,6 +871,7 @@ export class DribbleController {
       dirL: this.dirToLocal(launch, new THREE.Vector3()).normalize(),
     };
     this.lastShot = {
+      kind: s.kind,
       zone: s.zone,
       err: s.err,
       result: null,
@@ -816,10 +897,12 @@ export class DribbleController {
     const t = this.tracker;
     this.tracker = null;
     if (this.lastShot) this.lastShot.result = r;
-    if (r === 'swish' || r === 'made') this.stats.made++;
-    this.hud?.flashResult?.(RESULT_LABEL[r] || r, r);
+    const made = r === 'swish' || r === 'made';
+    if (made) this.stats.made++;
+    const label = made && this.lastShot?.kind === 'layup' ? 'LAYUP' : RESULT_LABEL[r] || r;
+    this.hud?.flashResult?.(label, r);
     this.hud?.setScore?.(this.stats.made, this.stats.shots.length);
-    this.hud?.setHint('Walk into the ball to pick it up · E to grab');
+    this.hud?.setHint(this.hints.loose);
     return t;
   }
 
@@ -1078,12 +1161,8 @@ export class DribbleController {
     const path = this.state === State.SHOT ? s.path : s.flick;
     const tt = this.state === State.SHOT ? s.t : this.t;
     const dirW = this.dirToWorld(path.dirAt(tt, _v)).normalize();
-    const u = this.state === State.SHOT ? clamp((s.t - s.tLoad) / (SHOT.releaseTime - s.tLoad), 0, 1) : 1;
-    // Through the set the fingers point straight up the back of the ball —
-    // wrist cocked, forearm vertical beneath it — and roll forward toward
-    // the rim as the arm extends: the wrist snap. (An up-forward hint at the
-    // set is nearly anti-parallel to the contact normal and degenerates.)
-    const fingers = this.dirToWorld(_v2.set(0.02 + 0.03 * u, 1 - 0.2 * u, -0.35 + 0.9 * u)).normalize();
+    const u = this.state === State.SHOT ? clamp((s.t - s.tLoad) / (s.spec.releaseTime - s.tLoad), 0, 1) : 1;
+    const fingers = this.dirToWorld(s.spec.fingers(u)).normalize();
     this._handOnBall('right', ballW, dirW, 400, HAND_POSES.shoot, 60, fingers);
 
     const gdir = this.dirToWorld(_v3.set(-0.94, -0.12, -0.32)).normalize();

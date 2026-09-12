@@ -13,13 +13,14 @@ the next thing.
 - **Stage 1 — the handle. Done and verified in real play.** Open outdoor
   court, VR-style hands (no arms, no legs), a real basketball, and a dribble
   engine. Deployed, mouse capture confirmed working by the owner.
-- **Stage 2 — shooting. Built and verified headless; not yet played by the
-  owner.** A 2K-style jumper with a timing meter, deterministic outcomes by
-  zone, a physics net and a synthesised swish. See *Shooting* below. Needs a
-  real-play pass on feel: meter speed, how the hands look through the
-  release, the sounds.
-- **Stage 3 — not chosen.** Layups/dunks under the rim are the obvious next
-  thing (see the close-range gap under *Shooting*).
+- **Stage 2 — shooting. Built, played once by the owner, first feedback
+  applied.** A 2K-style jumper with a timing meter, deterministic outcomes
+  by zone, layups inside 2.6 m, a physics net that drops a made ball under
+  the rim, a synthesised swish, a plain jump, and rebindable controls. See
+  *Shooting* below. The owner's first-play notes were: a jump key that
+  feels right while moving, layups, and the ball not running away after a
+  make — all done; the sounds and the meter speed still have no verdict.
+- **Stage 3 — not chosen.** Candidates under *Next*.
 
 ## Leave the repo ready for the next session
 
@@ -121,12 +122,34 @@ Read `src/ball/Shot.js` (pure maths) and the SHOOTING section of
 `DribbleController` (the states) before touching it. Every feel number is
 in `SHOT` in `Constants.js`; the Tab panel has a SHOT TUNING section.
 
-**Input.** Hold Space to start the jumper (from the hold or straight out of a
-live dribble, whichever hand), release Space to let go. Hesitation moved to
-R to free Space. A tap releases immediately (an airball, as in 2K). Movement
-locks for the duration; the body squares up to the basket on its own while
-the head stays free (the handle frame's yaw is driven by the hoop direction
-during a shot, not the camera).
+**Input.** Every action goes through the binding map (`src/core/Bindings.js`,
+stored in Settings, edited in the pause menu's Controls panel; game code
+asks `input.down('shoot')` / `pressedAction('jump')`, never a key). Defaults:
+shoot = hold right mouse, jump = Space, crossover = left mouse, between =
+V, behind Q, in&out F, hesitation R, low C, pick up E, drop G, sprint Shift.
+WASD, Tab and Esc are reserved. Hold shoot to start (from the hold or
+straight out of a live dribble, whichever hand), let go to release. A tap
+releases immediately (an airball, as in 2K). Movement input locks for the
+duration but the feet keep momentum — a jumper decelerates at
+`PLAYER.shotDecel` (10 m/s²), a layup at `SHOT.layupDecel` (6, about a
+step of carry; at 1.5 the drive ran straight through into the pole) — and the body
+squares up to the basket on its own while the head stays free (the handle
+frame's yaw is driven by the hoop direction during a shot, not the camera).
+The plain jump (`PLAYER.jumpSpeed`) works any time the body is not
+mid-shot; jumping while dribbling leaves the bounce path on the floor, by
+the handle frame's design.
+
+**Layups.** Inside `SHOT.layupRange` (2.6 m) of the rim the shoot button is
+a layup instead: same machinery, a `_shotSpec('layup')` — quicker timeline
+(`layupReleaseTime` 0.52 s, meter to 0.72), the ball gathered at the right
+hip and carried up beside the head, a bigger hop, momentum kept, one hand
+under the ball (finger roll). Grading is two-zone: within `layupWindow`
+(±0.09 s) it goes — a soft drop over the front rim peaking `layupMinApex`
+above it (30/30 from ten spots in the lab, all swishes) — otherwise it is
+short onto the front iron (`ZONE.FRONT`, 30/30 misses). "Contested" in the
+owner's spec means a defender at the rim; there are no defenders, so the
+hook is `DribbleController.contested` (tightens the window to
+`layupContestedWindow`) and nothing sets it yet.
 
 **The timeline is fixed** (`SHOT.releaseTime` = 0.62 s is the green centre,
 the meter fills to `meterTime` = 0.84 s and auto-releases there). The whole
@@ -143,7 +166,10 @@ the ideal point the ball travels `overhold` further and stalls in the hand.
 (`zoneFor`: green ≤ 0.03 s, iron ≤ 0.075, glass ≤ 0.135, else air). The
 ball is wherever it is on the path; a short "flick" `Contact` replans from
 that position and velocity to the launch velocity that zone's aim point
-needs (`aimFor`), so a bad release is still a continuous hand motion. At
+needs (`aimFor`), so a bad release is still a continuous hand motion. The
+body's contribution is the *measured* frame velocity (`frameVel`), not the
+feet's: the handle frame trails the feet, and while they decelerate the two
+differ by enough to show in the continuity stat. At
 the flick's end the launch is re-solved from the ball's actual world
 position and the ball goes free with backspin. If the flick ends part-way
 through a tick, both position *and* velocity are advanced by the remainder
@@ -185,10 +211,15 @@ rim. Results: swish, made, iron, glass, air. The HUD flashes the timing
 cylinders and knots (no more 1 px lines): 12 loops, diamond weave, hanging
 loops on the rim, full 3D sphere push-out so a ball pushes the cords apart
 and drags the net down, then it whips back and swings. The number of nodes
-the ball touches becomes drag on the ball (`Basketball.applyNetDrag`) — a
-real net slows the ball and that is much of why a swish reads as a swish —
-and drives the swish sound from `Game._update` (physical: any ball through
-the net sounds, a rattled make included).
+the ball touches becomes drag on the ball (`Basketball.applyNetDrag`),
+strongly anisotropic (`BALL.netDragHorizontal` 22 /s vs `netDragVertical`
+3.5 /s): a net catches nearly all of the ball's forward motion and only a
+little of its fall, so a made shot drops out under the rim, bounces and
+settles there instead of carrying on downcourt (the owner's first
+complaint; the smoke test now checks the ball rests within 1.5 m of the
+rim after a swish). The same contact drives the swish sound from
+`Game._update` (physical: any ball through the net sounds, a rattled make
+included).
 
 **Audio** is still fully synthesised. The swish is white noise through a
 sweeping bandpass (cord brush) over a lower whoosh (the net body) with a few
@@ -284,22 +315,25 @@ at `bb515cf`, kept only as reference for the shooting stage. If you open a
 session and the code looks like a park with grass, trees and a shot meter,
 you are on the wrong branch.
 
-## Next: play it, then decide stage 3
+## Next: second play-test, then decide stage 3
 
-The shooting stage has only been verified headless. The first thing the
-next session should do is get the owner's read on real play:
+The owner has played the jumper once; layups, the jump key, rebinding, and
+the ball settling under the rim came out of that and have only been
+verified headless. Still wanting a verdict from real play:
 
-- Meter speed and the size of the green window (`SHOT.green`, 0.03 s).
-- Whether the hands read well through the release from the eyes — the mesh
-  has no forearm, so the wrist cut is visible at the follow-through.
+- The new defaults (right-mouse shoot, Space jump) — or whatever the owner
+  rebinds them to.
+- Meter speed and the green window (`SHOT.green`, 0.03 s; the layup window
+  `layupWindow`, 0.09 s).
 - The sounds: nobody has heard the swish / rim / glass synths yet.
-- Whether the shot should also be triggerable by mouse.
+- The layup from the eyes (`node scripts/capture.mjs layup`).
 
-Candidates for stage 3: layups and dunks (the close-range gap above), or a
-rebound/chase loop so a miss is not a dead end. `solveArc()` in
-`MathUtils.js` is still unused and available. Reference commit `bb515cf`
-still has the old layup/dunk code (built on the old dribble model; do not
-paste it back).
+Candidates for stage 3: dunks (the layup machinery is the base — a dunk is
+a layup whose release point is above the rim and whose "launch" is a slam);
+defenders, which is what would give "contested" a meaning; or a
+rebound/chase loop. `solveArc()` in `MathUtils.js` is still unused.
+Reference commit `bb515cf` still has the old layup/dunk code (built on the
+old dribble model; do not paste it back).
 
 ## Decisions already made — do not silently reverse
 
@@ -316,8 +350,11 @@ paste it back).
 - **Shot outcomes are deterministic by timing zone.** No randomness in the
   aim: a green is always a swish, iron is always back iron and out, and so
   on, exactly as the owner specified. Do not add "realistic" random misses.
-- **Space is the shot button; hesitation moved to R.** The jump shot is a
-  hold-and-release, and Space reads as "jump".
+- **Controls are rebindable; defaults are shoot = right mouse (hold), jump =
+  Space, between = V.** The owner asked for a jump key that feels natural
+  while moving, and Space is that key on every FPS, so the shot moved to a
+  mouse button (precise release timing) and between-the-legs to V. Nothing
+  reads physical keys except WASD and the menu.
 - **Always right-handed.** The shot gathers into the right hand whichever
   hand was dribbling.
 - **The body squares up to the basket during a shot** while the head stays

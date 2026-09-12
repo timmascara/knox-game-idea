@@ -218,3 +218,20 @@ canvas { display: block; }
 .flash.result-iron { color: var(--yellow); }
 .flash.result-glass { color: var(--orange); }
 .flash.result-air { color: var(--red); }
+
+/* ---- Controls panel ---- */
+.btn-row { display: flex; gap: 10px; }
+.btn-row .btn { margin: 10px 0; }
+.bind-list { margin: 6px 0 4px; max-height: 52vh; overflow-y: auto; }
+.bind-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 13.5px;
+}
+.bind-row span { opacity: 0.85; }
+.bind-btn {
+  min-width: 110px; padding: 6px 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.08);
+  color: var(--ink); font-weight: 700; font-size: 13px;
+}
+.bind-btn:hover { background: rgba(255,255,255,0.14); }
+.bind-btn.capturing { border-color: var(--accent); color: var(--accent); }

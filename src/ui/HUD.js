@@ -70,12 +70,13 @@ export class HUD {
   }
 
   /** Timing feedback the instant the button comes up, before the ball lands. */
-  flashTiming(zone, err) {
+  flashTiming(zone, err, kind = 'jumper') {
     const e = this.el.timing;
     let text;
-    if (zone === 'green') text = 'PERFECT';
+    const side = err < 0 ? 'EARLY' : 'LATE';
+    if (zone === 'green') text = kind === 'layup' ? 'GOOD' : 'PERFECT';
+    else if (kind === 'layup') text = side;
     else {
-      const side = err < 0 ? 'EARLY' : 'LATE';
       const mag = Math.abs(err);
       text = mag <= SHOT.iron ? `SLIGHTLY ${side}` : mag <= SHOT.glass ? side : `WAY ${side}`;
     }

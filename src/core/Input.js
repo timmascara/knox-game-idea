@@ -1,11 +1,18 @@
+import { DEFAULT_BINDINGS } from './Bindings.js';
+
 /**
  * Keyboard + mouse + pointer-lock input. Exposes a per-frame snapshot the rest
  * of the game reads. Mouse deltas accumulate between frames and are consumed by
  * the camera each update.
+ *
+ * Mouse buttons are tracked as codes (`Mouse0`, `Mouse2`) in the same sets as
+ * keys, so an action can be bound to either; game code asks for actions
+ * (`down('shoot')`, `pressedAction('jump')`) rather than physical keys.
  */
 export class Input {
   constructor(domElement) {
     this.dom = domElement;
+    this.bindings = { ...DEFAULT_BINDINGS };
     this.keys = new Set();
     this.mouseDX = 0;
     this.mouseDY = 0;
@@ -66,6 +73,9 @@ export class Input {
       // Playing unlocked: keep asking for the lock on every click — some
       // hosts only grant it from a click directly on the canvas.
       if (!this.locked && this.allowUnlocked && e.target === this.dom) this.requestLock();
+      const code = `Mouse${e.button}`;
+      if (!this.keys.has(code)) this.pressed.add(code);
+      this.keys.add(code);
       if (e.button === 0) {
         this.mouseDown.left = true;
         this.mousePressed.left = true;
@@ -76,6 +86,9 @@ export class Input {
       }
     });
     document.addEventListener('mouseup', (e) => {
+      const code = `Mouse${e.button}`;
+      this.keys.delete(code);
+      this.released.add(code);
       if (e.button === 0) {
         this.mouseDown.left = false;
         this.mouseReleased.left = true;
@@ -111,6 +124,32 @@ export class Input {
 
   exitLock() {
     document.exitPointerLock?.();
+  }
+
+  setBindings(map) {
+    this.bindings = { ...DEFAULT_BINDINGS, ...(map || {}) };
+  }
+
+  // --- Actions (through the binding map) ------------------------------------
+  down(action) {
+    return this.isDown(this.bindings[action]);
+  }
+
+  pressedAction(action) {
+    const c = this.bindings[action];
+    if (this.pressed.has(c)) return true;
+    // The harnesses poke mousePressed directly; honour that for mouse codes.
+    if (c === 'Mouse0' && this.mousePressed.left) return true;
+    if (c === 'Mouse2' && this.mousePressed.right) return true;
+    return false;
+  }
+
+  releasedAction(action) {
+    const c = this.bindings[action];
+    if (this.released.has(c)) return true;
+    if (c === 'Mouse0' && this.mouseReleased.left) return true;
+    if (c === 'Mouse2' && this.mouseReleased.right) return true;
+    return false;
   }
 
   isDown(code) {

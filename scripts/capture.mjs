@@ -8,7 +8,7 @@
  *   node scripts/capture.mjs [scenario...]
  *
  * Scenarios: hero, hold, handclose, ball, ballclose, pound, crossover, between, behind, inout, hesitation,
- * stepback, speed, low, shoot, shothands, flight, net, meter, all (default: hold pound).
+ * stepback, speed, low, shoot, shothands, flight, net, meter, layup, settle, menu, all (default: hold pound).
  */
 import { chromium } from 'playwright-core';
 import { mkdirSync } from 'node:fs';
@@ -104,10 +104,10 @@ await page.evaluate(() => {
     },
     // Start a jumper; tick with Space held until `release` seconds in, then let go.
     shootTo(release) {
-      const g = window.__game; const d = g.dribble;
-      g.input.pressed.add('Space'); g.input.keys.add('Space'); g._update(1 / 120); g.input.endFrame();
-      while (d.shot && d.shot.t < release - 1e-6) { g.input.keys.add('Space'); g._update(1 / 120); g.input.endFrame(); }
-      g.input.keys.delete('Space'); g.input.released.add('Space');
+      const g = window.__game; const d = g.dribble; const S = g.input.bindings.shoot;
+      g.input.pressed.add(S); g.input.keys.add(S); g._update(1 / 120); g.input.endFrame();
+      while (d.shot && d.shot.t < release - 1e-6) { g.input.keys.add(S); g._update(1 / 120); g.input.endFrame(); }
+      g.input.keys.delete(S); g.input.released.add(S);
     },
   };
   function d_start(sign) { window.__game.dribble._startDribble(sign); }
@@ -215,11 +215,11 @@ const scenarios = {
     // shootTo returns at the release tick; rewind the sheet through the whole shot deterministically.
     await page.evaluate(() => { const h = window.__h; h.faceHoop(0, 6.5, 0.16); h.sheetBegin(5, 5);
       const g = window.__game; const d = g.dribble;
-      g.input.pressed.add('Space'); g.input.keys.add('Space'); g._update(1 / 120); g.input.endFrame(); h.sheetAdd();
+      const S = g.input.bindings.shoot; g.input.pressed.add(S); g.input.keys.add(S); g._update(1 / 120); g.input.endFrame(); h.sheetAdd();
       for (let i = 1; i < 25; i++) {
         for (let k = 0; k < 4; k++) {
           const hold = d.shot && d.shot.t < 0.62 - 1e-6;
-          if (hold) g.input.keys.add('Space'); else if (g.input.keys.has('Space')) { g.input.keys.delete('Space'); g.input.released.add('Space'); }
+          if (hold) g.input.keys.add(S); else if (g.input.keys.has(S)) { g.input.keys.delete(S); g.input.released.add(S); }
           g._update(1 / 120); g.input.endFrame();
         }
         h.sheetAdd();
@@ -235,8 +235,9 @@ const scenarios = {
       await page.evaluate(({ at }) => {
         const h = window.__h; h.faceHoop(0, 6.5, 0.16);
         const g = window.__game; const d = g.dribble;
-        g.input.pressed.add('Space'); g.input.keys.add('Space'); g._update(1 / 120); g.input.endFrame();
-        while (d.shot && d.shot.t < at - 1e-6) { if (d.shot.t < 0.62) g.input.keys.add('Space'); else { g.input.keys.delete('Space'); g.input.released.add('Space'); } g._update(1 / 120); g.input.endFrame(); }
+        const S = g.input.bindings.shoot;
+        g.input.pressed.add(S); g.input.keys.add(S); g._update(1 / 120); g.input.endFrame();
+        while (d.shot && d.shot.t < at - 1e-6) { if (d.shot.t < 0.62) g.input.keys.add(S); else { g.input.keys.delete(S); g.input.released.add(S); } g._update(1 / 120); g.input.endFrame(); }
         const b = g.ball.mesh.position;
         h.closeup({ x: b.x + 0.75, y: b.y + 0.05, z: b.z + 0.25 }, { x: b.x, y: b.y - 0.05, z: b.z }, 40);
       }, { at });
@@ -276,9 +277,57 @@ const scenarios = {
     await shot('net-close');
     await page.evaluate(() => window.__h.freecam());
   },
+  /** A layup driven in from the free-throw line, from the player's eyes, 33 ms apart. */
+  async layup() {
+    await page.evaluate(() => {
+      const h = window.__h; const g = window.__game; const d = g.dribble;
+      h.faceHoop(1.2, 7.8, 0.32);
+      h.click('left'); h.tick(1);
+      let guard = 0;
+      while (guard++ < 400 && Math.hypot(g.player.position.x, g.player.position.z - 12.425) > 2.3) { h.press('KeyW'); h.tick(1); h.release('KeyW'); }
+      h.sheetBegin(5, 5);
+      const S = g.input.bindings.shoot;
+      g.input.pressed.add(S); g.input.keys.add(S); g.input.keys.add('KeyW'); g._update(1 / 120); g.input.endFrame(); h.sheetAdd();
+      for (let i = 1; i < 25; i++) {
+        for (let k = 0; k < 4; k++) {
+          const hold = d.shot && d.shot.t < window.__CONST.SHOT.layupReleaseTime - 1e-6;
+          if (hold) g.input.keys.add(S); else if (g.input.keys.has(S)) { g.input.keys.delete(S); g.input.released.add(S); }
+          g._update(1 / 120); g.input.endFrame();
+        }
+        h.sheetAdd();
+      }
+      g.input.keys.delete('KeyW');
+    });
+    await page.locator('#sheet').screenshot({ path: `${OUT}/layup-sheet.png` });
+    console.log('wrote', `${OUT}/layup-sheet.png`);
+    await page.evaluate(() => window.__h.sheetEnd());
+  },
+  /** Where the ball ends up after a swish: from beside the hoop, every 0.25 s for 5 s. */
+  async settle() {
+    await page.evaluate(() => {
+      const h = window.__h; const g = window.__game;
+      h.faceHoop(0, 7.5, 0.2); h.shootTo(0.62);
+      while (g.dribble.state !== 'loose') h.tick(1);
+      h.closeup({ x: 3.2, y: 1.8, z: 10.2 }, { x: 0, y: 1.3, z: 12.4 }, 50);
+      let guard = 0; while (guard++ < 400 && !(g.ball.position.y < 3.2 && g.ball.velocity.y < 0)) h.tick(1);
+      h.sheetBegin(5, 4); for (let i = 0; i < 20; i++) { h.tick(30); h.sheetAdd(); }
+    });
+    await page.locator('#sheet').screenshot({ path: `${OUT}/settle-sheet.png` });
+    console.log('wrote', `${OUT}/settle-sheet.png`);
+    await page.evaluate(() => { window.__h.sheetEnd(); window.__h.freecam(); });
+  },
+  /** The pause menu's Controls panel. */
+  async menu() {
+    await page.evaluate(() => { const g = window.__game; g.menu.showPause(); g.menu._showPanel('controls'); });
+    await page.screenshot({ path: `${OUT}/menu-controls.png` });
+    console.log('wrote', `${OUT}/menu-controls.png`);
+    await page.evaluate(() => { const g = window.__game; g.menu._showPanel('main'); });
+    await page.screenshot({ path: `${OUT}/menu-main.png` });
+    await page.evaluate(() => { const g = window.__game; g.menu.hide(); });
+  },
   /** The HUD meter mid-fill and at a green / late result. */
   async meter() {
-    await page.evaluate(() => { const h = window.__h; h.faceHoop(0, 6.5, 0.16); const g = window.__game; g.input.pressed.add('Space'); g.input.keys.add('Space'); g._update(1 / 120); g.input.endFrame(); while (g.dribble.shot.t < 0.45) { g.input.keys.add('Space'); g._update(1 / 120); g.input.endFrame(); } h.render(); });
+    await page.evaluate(() => { const h = window.__h; h.faceHoop(0, 6.5, 0.16); const g = window.__game; const S = g.input.bindings.shoot; g.input.pressed.add(S); g.input.keys.add(S); g._update(1 / 120); g.input.endFrame(); while (g.dribble.shot.t < 0.45) { g.input.keys.add(S); g._update(1 / 120); g.input.endFrame(); } h.render(); });
     await page.screenshot({ path: `${OUT}/meter-fill.png` });
     console.log('wrote', `${OUT}/meter-fill.png`);
     await page.evaluate(() => { const h = window.__h; h.faceHoop(0, 6.5, 0.16); h.shootTo(0.62); h.tick(3); h.render(); });
@@ -315,11 +364,11 @@ const scenarios = {
 };
 
 for (const name of wanted) {
-  const list = name === 'all' ? ['hold', 'ball', 'pound', 'crossover', 'between', 'behind', 'inout', 'hesitation', 'stepback', 'speed', 'low', 'shoot', 'shothands', 'flight', 'net', 'meter'] : [name];
+  const list = name === 'all' ? ['hold', 'ball', 'pound', 'crossover', 'between', 'behind', 'inout', 'hesitation', 'stepback', 'speed', 'low', 'shoot', 'shothands', 'flight', 'net', 'meter', 'layup', 'settle', 'menu'] : [name];
   for (const s of list) {
     if (scenarios[s]) await scenarios[s]();
     else if (s === 'crossover') await scenarios.move('crossover', 'left');
-    else if (s === 'between') await scenarios.move('between', 'right');
+    else if (s === 'between') await scenarios.move('between', 'KeyV');
     else if (s === 'behind') await scenarios.move('behind', 'KeyQ');
     else if (s === 'inout') await scenarios.move('inout', 'KeyF');
     else if (s === 'hesitation') await scenarios.move('hesitation', 'KeyR');

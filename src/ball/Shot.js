@@ -19,7 +19,7 @@ const DEG = Math.PI / 180;
 const UP = new THREE.Vector3(0, 1, 0);
 
 /** Where a release landed on the meter, from its signed timing error. */
-export const ZONE = { GREEN: 'green', IRON: 'iron', GLASS: 'glass', AIR: 'air' };
+export const ZONE = { GREEN: 'green', IRON: 'iron', GLASS: 'glass', AIR: 'air', FRONT: 'front' };
 
 export function zoneFor(err) {
   const e = Math.abs(err);
@@ -29,11 +29,34 @@ export function zoneFor(err) {
   return ZONE.AIR;
 }
 
+/** Layups: a wide make window (narrow when contested), otherwise the front iron. */
+export function zoneForLayup(err, contested = false) {
+  const w = contested ? SHOT.layupContestedWindow : SHOT.layupWindow;
+  return Math.abs(err) <= w ? ZONE.GREEN : ZONE.FRONT;
+}
+
+/** The meter's band layout for each kind of shot: [maxAbsError, zone] outward from the ideal. */
+export function meterSpec(kind, contested = false) {
+  if (kind === 'layup') {
+    return {
+      releaseTime: SHOT.layupReleaseTime,
+      meterTime: SHOT.layupMeterTime,
+      zones: [[contested ? SHOT.layupContestedWindow : SHOT.layupWindow, ZONE.GREEN], [Infinity, ZONE.FRONT]],
+    };
+  }
+  return {
+    releaseTime: SHOT.releaseTime,
+    meterTime: SHOT.meterTime,
+    zones: [[SHOT.green, ZONE.GREEN], [SHOT.iron, ZONE.IRON], [SHOT.glass, ZONE.GLASS], [Infinity, ZONE.AIR]],
+  };
+}
+
 export const ZONE_LABEL = {
   [ZONE.GREEN]: 'SWISH',
   [ZONE.IRON]: 'BACK IRON',
   [ZONE.GLASS]: 'OFF THE GLASS',
   [ZONE.AIR]: 'AIRBALL',
+  [ZONE.FRONT]: 'FRONT RIM',
 };
 
 /**
@@ -73,7 +96,7 @@ export function solveLaunch(from, to, entryDeg = SHOT.entryAngle, k = BALL.linea
  * the rest (the back rim kicks the ball out, the glass carom drops it on
  * the near rim, the airball falls short of everything).
  */
-export function aimFor(zone, err, hoop, from) {
+export function aimFor(zone, err, hoop, from, kind = 'jumper') {
   const rim = hoop.rimCenter;
   const dir = new THREE.Vector3(rim.x - from.x, 0, rim.z - from.z);
   const dist = dir.length();
@@ -108,6 +131,10 @@ export function aimFor(zone, err, hoop, from) {
       aim.y = rim.y + SHOT.glassHeight - (late ? 0 : 0.08);
       break;
     }
+    case ZONE.FRONT:
+      // A missed layup: short, onto the front iron, which kicks it away.
+      aim.addScaledVector(dir, -(HOOP.rimRadius + SHOT.frontDepth));
+      break;
     case ZONE.AIR:
     default:
       aim.addScaledVector(dir, -(HOOP.rimRadius + SHOT.airShort));
@@ -120,9 +147,10 @@ export function aimFor(zone, err, hoop, from) {
   // above the rim instead: a swish must rise well above the rim and drop
   // in steeply; a back-iron miss comes in flat so the kick carries it back
   // out over the front.
-  if (zone === ZONE.GREEN) entry = entryFor(from, aim, entry, SHOT.minApexSwish);
+  if (zone === ZONE.GREEN) entry = entryFor(from, aim, entry, kind === 'layup' ? SHOT.layupMinApex : SHOT.minApexSwish);
   else if (zone === ZONE.IRON) entry = entryFor(from, aim, entry, SHOT.minApexIron);
   else if (zone === ZONE.GLASS) entry = entryFor(from, aim, entry, 0.12);
+  else if (zone === ZONE.FRONT) entry = entryFor(from, aim, entry, 0.3);
   return { aim, entry, dir, side, dist };
 }
 
@@ -218,7 +246,7 @@ export class ShotTracker {
     const lowOutside = descending && pos.y < rim.y - 0.3 && (horiz > HOOP.rimRadius + BALL.radius || !this.pending);
     if (this.courtHits > 0 || lowOutside || this.timer > 8) {
       if (this.boardHits > 0) this.result = 'glass';
-      else if (this.rimHits > 0) this.result = 'iron';
+      else if (this.rimHits > 0) this.result = this.zone === ZONE.FRONT ? 'front' : 'iron';
       else this.result = 'air';
     }
     return this.result;
@@ -229,6 +257,7 @@ export const RESULT_LABEL = {
   swish: 'SWISH',
   made: 'BUCKET',
   iron: 'BACK IRON',
+  front: 'FRONT RIM',
   glass: 'OFF THE GLASS',
   air: 'AIRBALL',
   miss: 'MISS',

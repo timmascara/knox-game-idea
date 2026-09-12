@@ -50,6 +50,11 @@ export const BALL = {
   linearDamping: 0.03,
   angularDamping: 0.28,
   rollDecay: 1.6,
+  // Drag while the ball is in the net. A net catches nearly all of the
+  // ball's forward motion and a little of its fall, so a made shot drops
+  // out under the rim instead of carrying on past it.
+  netDragHorizontal: 22.0,
+  netDragVertical: 3.5,
 };
 
 // ---------------------------------------------------------------------------
@@ -65,9 +70,10 @@ export const PLAYER = {
   accel: 30.0,
   deaccel: 38.0,
   airAccel: 8.0,
-  jumpSpeed: 4.6,
+  jumpSpeed: 4.2, // the plain jump (Space by default)
   gravity: -18.0,
   stepHeight: 0.35,
+  shotDecel: 10.0, // feet slow at this rate through a jumper (m/s²)
 };
 
 // ---------------------------------------------------------------------------
@@ -156,6 +162,25 @@ export const SHOT = {
   glassSide: 0.27, // and this far across, to the far side from the shooter
   airShort: 0.45, // airballs fall this far short of the front rim
   airDrop: 0.18, // and this far below rim height
+
+  // Layups: inside `layupRange` of the rim the shoot button is a layup — a
+  // quicker, one-handed drive to the rim with a forgiving window. Uncontested
+  // (there is nothing to contest yet) it goes in whenever the release is
+  // within `layupWindow`; a contested one (a hook for later) only inside
+  // `layupContestedWindow`. Misses catch the front iron.
+  layupRange: 2.6,
+  layupSetTime: 0.18,
+  layupReleaseTime: 0.52,
+  layupMeterTime: 0.72,
+  layupJumpSpeed: 3.8,
+  layupWindow: 0.09,
+  layupContestedWindow: 0.03,
+  layupPoint: [0.24, 1.30, 0.38], // gathered at the right hip
+  layupCarry: [0.26, 1.95, 0.44], // carried up beside the head, in view
+  layupExtension: 0.42,
+  layupMinApex: 0.35, // the soft drop peaks this far above the rim
+  layupDecel: 6.0, // a layup keeps a step of momentum, not a sprint's worth
+  frontDepth: 0.04, // a missed layup's centre falls this short of the front tube
 };
 
 // Rapier interaction groups: 16-bit membership | 16-bit filter.

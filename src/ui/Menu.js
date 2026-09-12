@@ -1,5 +1,9 @@
+import { BINDING_LABELS, DEFAULT_BINDINGS, codeLabel, RESERVED_CODES } from '../core/Bindings.js';
+
 /**
- * Start + pause menu with an inline settings panel. The menu only appears
+ * Start + pause menu with an inline settings panel and a controls panel
+ * where every action can be rebound (click a binding, press a key or a
+ * mouse button; Esc cancels). The menu only appears
  * before first entry and when the player pauses (pointer unlock / Esc), and
  * every control writes straight through to Settings.
  */
@@ -25,20 +29,19 @@ export class Menu {
 
         <div id="menu-main">
           <button class="btn" id="btn-play">Step on the court</button>
-          <button class="btn secondary" id="btn-settings">Settings</button>
-          <div class="controls-list">
-            <div><b>WASD</b> move · <b>Shift</b> sprint (speed dribble)</div>
-            <div><b>Mouse</b> look</div>
-            <div><b>E</b> pick up · hold / dribble</div>
-            <div><b>Space</b> hold to shoot · let go in the green</div>
-            <div><b>L-Click</b> crossover · with <b>S</b>: step-back</div>
-            <div><b>R-Click</b> between the legs</div>
-            <div><b>Q</b> behind the back</div>
-            <div><b>F</b> in &amp; out</div>
-            <div><b>R</b> hesitation</div>
-            <div><b>C</b> (hold) low dribble</div>
-            <div><b>G</b> drop the ball</div>
-            <div><b>Tab</b> tuning panel · <b>Esc</b> pause</div>
+          <div class="btn-row">
+            <button class="btn secondary" id="btn-settings">Settings</button>
+            <button class="btn secondary" id="btn-controls">Controls</button>
+          </div>
+          <div class="controls-list" id="controls-list"></div>
+        </div>
+
+        <div id="menu-controls" style="display:none">
+          <p class="menu-sub">Click a binding, then press a key or mouse button. Esc cancels.</p>
+          <div class="bind-list" id="bind-list"></div>
+          <div class="btn-row">
+            <button class="btn secondary" id="btn-bind-reset">Reset to defaults</button>
+            <button class="btn" id="btn-bind-back">Back</button>
           </div>
         </div>
 
@@ -84,8 +87,13 @@ export class Menu {
     $('#btn-play').onclick = () => (this.started ? this.cb.onResume() : this.cb.onStart());
     $('#btn-settings').onclick = () => this._showSettings(true);
     $('#btn-back').onclick = () => this._showSettings(false);
+    $('#btn-controls').onclick = () => this._showPanel('controls');
+    $('#btn-bind-back').onclick = () => this._showPanel('main');
+    $('#btn-bind-reset').onclick = () => this._setBindings(null);
 
     this._syncControls();
+    this._renderBindings();
+    this._bindCapture();
 
     const s = this.settings;
     $('#set-sens').oninput = (e) => {
@@ -126,14 +134,83 @@ export class Menu {
   }
 
   _showSettings(on) {
-    this.$('#menu-main').style.display = on ? 'none' : 'block';
-    this.$('#menu-settings').style.display = on ? 'block' : 'none';
+    this._showPanel(on ? 'settings' : 'main');
+  }
+
+  _showPanel(name) {
+    this.$('#menu-main').style.display = name === 'main' ? 'block' : 'none';
+    this.$('#menu-settings').style.display = name === 'settings' ? 'block' : 'none';
+    this.$('#menu-controls').style.display = name === 'controls' ? 'block' : 'none';
+    if (name !== 'controls') this._capture = null;
+  }
+
+  // --- Bindings -------------------------------------------------------------
+  get bindings() {
+    return this.settings.get('bindings');
+  }
+
+  _setBindings(map) {
+    const next = map ? { ...map } : null;
+    this.settings.set('bindings', next || { ...this._defaults() });
+    this.cb.onSettingChange?.('bindings', this.settings.get('bindings'));
+    this._renderBindings();
+  }
+
+  _defaults() {
+    return { ...DEFAULT_BINDINGS };
+  }
+
+  _renderBindings() {
+    const b = this.bindings;
+    // Start-menu summary.
+    const list = this.$('#controls-list');
+    const rows = [`<div><b>WASD</b> move · <b>Mouse</b> look</div>`];
+    for (const [action, label] of BINDING_LABELS) rows.push(`<div><b>${codeLabel(b[action])}</b> ${label}</div>`);
+    rows.push(`<div><b>Tab</b> tuning panel · <b>Esc</b> pause</div>`);
+    list.innerHTML = rows.join('');
+    // Controls panel.
+    const panel = this.$('#bind-list');
+    panel.innerHTML = BINDING_LABELS.map(
+      ([action, label]) =>
+        `<div class="bind-row"><span>${label}</span><button class="bind-btn" data-action="${action}">${codeLabel(b[action])}</button></div>`
+    ).join('');
+    for (const btn of panel.querySelectorAll('.bind-btn')) {
+      btn.onclick = () => {
+        for (const o of panel.querySelectorAll('.bind-btn')) o.classList.remove('capturing');
+        btn.classList.add('capturing');
+        btn.textContent = 'press a key…';
+        this._capture = btn.dataset.action;
+      };
+    }
+  }
+
+  /** While a binding is being captured, the next key or mouse button takes it. */
+  _bindCapture() {
+    const take = (code, e) => {
+      if (!this._capture) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const action = this._capture;
+      this._capture = null;
+      if (code === 'Escape' || RESERVED_CODES.has(code)) {
+        this._renderBindings();
+        return;
+      }
+      const map = { ...this.bindings };
+      // Swap with whatever already had this code, so nothing is left unbound.
+      for (const [other, c] of Object.entries(map)) if (c === code && other !== action) map[other] = map[action];
+      map[action] = code;
+      this._setBindings(map);
+    };
+    window.addEventListener('keydown', (e) => take(e.code, e), true);
+    document.addEventListener('mousedown', (e) => { if (this._capture) take(`Mouse${e.button}`, e); }, true);
+    document.addEventListener('contextmenu', (e) => { if (this._capture) e.preventDefault(); }, true);
   }
 
   showStart() {
     this.started = false;
     this.overlay.classList.remove('hidden');
-    this._showSettings(false);
+    this._showPanel('main');
     this.$('#menu-sub').textContent = 'Handle it. Then knock it down.';
     this.$('#btn-play').textContent = 'Step on the court';
   }
@@ -142,7 +219,7 @@ export class Menu {
     this.started = true;
     this._syncControls();
     this.overlay.classList.remove('hidden');
-    this._showSettings(false);
+    this._showPanel('main');
     this.$('#menu-sub').textContent = 'Paused.';
     this.$('#btn-play').textContent = 'Resume';
   }

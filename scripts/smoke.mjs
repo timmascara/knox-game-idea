@@ -120,7 +120,7 @@ const result = await page.evaluate(() => {
   // 3) Every move hands off to the right hand and returns to a pound.
   const moves = [
     ['crossover', 'left', -1],
-    ['between', 'right', 1],
+    ['between', 'KeyV', 1],
     ['behind', 'KeyQ', -1],
     ['inout', 'KeyF', -1],
     ['hesitation', 'KeyR', -1],
@@ -189,14 +189,15 @@ const result = await page.evaluate(() => {
   // 8) Shooting. Hold Space, let go `release` seconds into the shot, then run
   //    until the flight is decided. Continuity is measured by the same tick
   //    monitor through gather, set, rise and flick.
+  const SHOOT = g.input.bindings.shoot;
   const shoot = (release, keys = []) => {
-    g.input.pressed.add('Space');
-    tick(1, ['Space', ...keys]);
+    g.input.pressed.add(SHOOT);
+    tick(1, [SHOOT, ...keys]);
     let guard = 0;
     while (d.state !== 'loose' && guard++ < 400) {
       const holding = d.shot && d.shot.t < release - 1e-6;
-      if (!holding && g.input.keys.has('Space')) { g.input.keys.delete('Space'); g.input.released.add('Space'); }
-      tick(1, holding ? ['Space', ...keys] : keys);
+      if (!holding && g.input.keys.has(SHOOT)) { g.input.keys.delete(SHOOT); g.input.released.add(SHOOT); }
+      tick(1, holding ? [SHOOT, ...keys] : keys);
     }
     check(d.state === 'loose', `shot never released (state ${d.state})`);
     for (let i = 0; i < 900 && d.tracker; i++) tick(1);
@@ -224,6 +225,13 @@ const result = await page.evaluate(() => {
   shots.push(`${ls?.zone}:${ls?.result}`);
   check(ls?.zone === 'green' && ls?.result === 'swish', `green release should swish, got ${ls?.zone}:${ls?.result}`);
   check(d.stats.maxReleaseJump < 0.5, `release velocity mismatch ${d.stats.maxReleaseJump.toFixed(2)} m/s`);
+  // The net catches the ball: a made shot drops out and settles under the rim.
+  tick(600);
+  const rimXZ = { x: 0, z: 12.425 };
+  const settled = g.ball.position;
+  const settleDist = Math.hypot(settled.x - rimXZ.x, settled.z - rimXZ.z);
+  const settleSpeed = g.ball.velocity.length();
+  check(settleDist < 1.5 && settleSpeed < 0.3, `made ball should settle under the rim (${settleDist.toFixed(2)} m away, ${settleSpeed.toFixed(2)} m/s)`);
 
   window.__phase = 'shoot-pullup';
   // b) Pull-up out of a moving dribble, running in from the wing, still green.
@@ -253,6 +261,40 @@ const result = await page.evaluate(() => {
   }
   check(d.stats.maxReleaseJump < 0.5, `release velocity mismatch ${d.stats.maxReleaseJump.toFixed(2)} m/s`);
   check(g.player.grounded && !g.player.lockMove, 'player still locked after the shot');
+
+  // 9) Layups. Drive in from the free-throw line; inside layupRange the shoot
+  //    button is a layup. A release near the ideal goes; a late one catches the front iron.
+  for (const [release, wantMade, phase] of [[0.52, true, 'layup'], [0.66, false, 'layup-late']]) {
+    window.__phase = phase;
+    faceHoop(1.2, 7.8);
+    g.ball.setControlled(); d.state = 'hold'; d.plan = null; d.flight = null; d.contact = null; d._ft = null; d.tracker = null;
+    d._updateFrame(0, true); d.ballLocal.set(0, 1.14, 0.40); d.ballVelLocal.set(0, 0, 0);
+    tick(20);
+    tick(1, [], 'left');
+    let guard = 0;
+    while (guard++ < 400 && Math.hypot(g.player.position.x, g.player.position.z - 12.425) > 2.3) tick(1, ['KeyW']);
+    check(d.dribbling, `expected to still be dribbling on the drive (${d.state})`);
+    ls = shoot(release, ['KeyW']);
+    shots.push(`${ls?.kind}:${ls?.zone}:${ls?.result}`);
+    check(ls?.kind === 'layup', `expected a layup inside the range, got ${ls?.kind}`);
+    const made = ls?.result === 'swish' || ls?.result === 'made';
+    check(made === wantMade, `layup released at ${release}s should ${wantMade ? 'go in' : 'miss'}, got ${ls?.zone}:${ls?.result}`);
+    for (let i = 0; i < 300 && !g.player.grounded; i++) tick(1);
+  }
+
+  // 10) A plain jump while moving, without shooting.
+  window.__phase = 'jump';
+  faceHoop(0, 4);
+  g.ball.setFree(); g.ball.setPositionHard({ x: 6, y: 0.2, z: -6 }); d.state = 'loose'; d._ft = null; d.tracker = null;
+  tick(30, ['KeyW']);
+  g.input.pressed.add(g.input.bindings.jump);
+  tick(1, ['KeyW', g.input.bindings.jump]);
+  tick(6, ['KeyW']);
+  check(!g.player.grounded && g.player.vy > 1, `jump did not leave the ground (vy ${g.player.vy.toFixed(2)})`);
+  check(d.state === 'loose', `a plain jump must not shoot (${d.state})`);
+  let airTicks = 0;
+  while (!g.player.grounded && airTicks++ < 300) tick(1, ['KeyW']);
+  check(g.player.grounded, 'never landed from the jump');
 
   // Invariants.
   check(minY > -0.01, `ball went under the court by ${(-minY).toFixed(3)} m`);

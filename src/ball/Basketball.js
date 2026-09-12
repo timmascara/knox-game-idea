@@ -224,12 +224,13 @@ export class Basketball {
    */
   applyNetDrag(dt, contacts) {
     if (this.mode !== BallMode.FREE || contacts <= 0) return;
-    const k = 4.0 * Math.min(1, contacts / 8);
-    const f = Math.exp(-k * dt);
+    const s = Math.min(1, contacts / 6);
+    const fh = Math.exp(-BALL.netDragHorizontal * s * dt);
+    const fv = Math.exp(-BALL.netDragVertical * s * dt);
     const v = this.body.linvel();
-    this.body.setLinvel({ x: v.x * f, y: v.y * f, z: v.z * f }, true);
+    this.body.setLinvel({ x: v.x * fh, y: v.y * fv, z: v.z * fh }, true);
     const w = this.body.angvel();
-    const fw = Math.exp(-2.5 * k * dt);
+    const fw = Math.exp(-10 * s * dt);
     this.body.setAngvel({ x: w.x * fw, y: w.y * fw, z: w.z * fw }, true);
   }
 

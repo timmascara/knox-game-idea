@@ -50,17 +50,18 @@ the mouse, and embedded frames refuse to.
 | --- | --- |
 | `W A S D` | Move · `Shift` sprint (speed dribble, ball pushed out ahead) |
 | Mouse | Look (the ball stays in front of your *body*, not your head) |
+| **Right click (hold)** | **Shoot** — jumper, or a layup near the rim; let go in the green |
+| `Space` | Jump |
 | `E` | Pick up the ball · hold ↔ dribble |
 | **Left click** | Crossover · with `S` held: **step-back** |
-| **Right click** | Between the legs |
+| `V` | Between the legs |
 | `Q` | Behind the back |
 | `F` | In & out |
-| **`Space` (hold)** | **Jump shot** — let go in the green |
 | `R` | Hesitation (hang dribble, then explode) |
 | `C` (hold) | Low / protect dribble |
 | `G` | Drop the ball |
 | `Tab` | Live tuning panel |
-| `Esc` | Pause / settings |
+| `Esc` | Pause / settings / **controls (rebind anything)** |
 
 From a hold, **left click** starts dribbling in the right hand and **right
 click** in the left. Moves can be pressed ahead of time: a two-deep buffer
@@ -68,13 +69,17 @@ chains them at the next catch, so *click, Q* is a crossover into a behind-
 the-back, and a pound can be interrupted early in its carry for snappier
 response.
 
-Hold `Space` from a hold or straight out of a dribble and the ball gathers
-into both hands, sets beside your eye and rises with a hop while the meter
-beside the crosshair fills. Let go in the tiny green band and it swishes;
-just outside and it catches back iron and pops out; further and it comes
-off the glass; further still and it is an airball. Every zone is
-deterministic. The body squares up to the basket by itself; your head
-stays free.
+Hold the shoot button from a hold or straight out of a dribble and the
+ball gathers into both hands, sets beside your eye and rises with a hop
+while the meter beside the crosshair fills. Let go in the tiny green band
+and it swishes; just outside and it catches back iron and pops out;
+further and it comes off the glass; further still and it is an airball.
+Inside about two and a half metres of the rim the same button is a layup:
+quicker, one-handed, a wide window that nearly always goes and a front-rim
+miss when it doesn't. Every zone is deterministic. The body squares up to
+the basket by itself and keeps its momentum; your head stays free. A made
+shot drops out of the net and settles under the rim. Every key above can
+be rebound from the pause menu.
 
 Working on this project? Read **[CLAUDE.md](CLAUDE.md)** first — it records
 the invariants, the conventions, what is deliberately absent, and what the
@@ -200,13 +205,14 @@ placement): `python3 scripts/rig_hand.py <hand.obj> src/assets/hand_right.glb`
 
 The smoke test pumps the fixed-step loop through pickup, a pound rhythm,
 every move, sprinting, the low dribble, a buffered combo, a drop and
-chase, and five shots (a green from the hold, a green pull-up out of a
-running dribble, a late, a very early and a slightly late release), and
-asserts: the ball never dips under the court, its velocity is continuous
-across catch and release and through the whole jumper, the palm stays on
-the ball while carrying and shooting, every move hands off to the intended
-hand and returns to a pound, each release lands in its zone, and nothing
-goes non-finite. `capture.mjs` renders deterministic 20-frame
+chase, five jumpers (a green from the hold, a green pull-up out of a
+running dribble, a late, a very early and a slightly late release), a
+made and a missed layup off a drive, and a plain jump, and asserts: the
+ball never dips under the court, its velocity is continuous across catch
+and release and through the whole jumper, the palm stays on the ball while
+carrying and shooting, every move hands off to the intended hand and
+returns to a pound, each release lands in its zone, a made ball settles
+under the rim, and nothing goes non-finite. `capture.mjs` renders deterministic 20-frame
 contact sheets so a move can be reviewed frame by frame without a GPU.
 
 ---
@@ -222,8 +228,9 @@ something feels right, write it into Constants.
 
 ## Not here yet (on purpose)
 
-Layups, dunks, the park, weather and the scoreboard were removed to keep
-the early stages focused; the earlier build is in git history (`bb515cf`).
+Dunks, defenders, the park, weather and the scoreboard were removed (or
+never built) to keep the early stages focused; the earlier build is in git
+history (`bb515cf`).
 A spin move is deliberately absent: a first-person spin with no body is
 nauseating, and needs a camera treatment of its own.
 

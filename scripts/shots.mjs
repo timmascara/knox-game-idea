@@ -42,11 +42,13 @@ const r = await page.evaluate(async ({ spots, errs, params, zone }) => {
   for (const [k, v] of Object.entries(params)) window.__CONST.SHOT[k] = v;
   for (const [x, z] of spots) for (const e of errs) {
     hold(x, z);
-    const target = 0.62 + e;
-    g.input.pressed.add('Space'); g.input.keys.add('Space'); g._update(DT); g.input.endFrame();
+    const dist0 = Math.hypot(x, 12.425 - z);
+    const target = (dist0 < window.__CONST.SHOT.layupRange ? window.__CONST.SHOT.layupReleaseTime : 0.62) + e;
+    const S = g.input.bindings.shoot;
+    g.input.pressed.add(S); g.input.keys.add(S); g._update(DT); g.input.endFrame();
     let guard = 0; let released = false;
     while (d.state !== 'loose' && guard++ < 400) {
-      if (d.shot && d.shot.t < target - 1e-6) g.input.keys.add('Space'); else if (!released) { g.input.keys.delete('Space'); g.input.released.add('Space'); released = true; }
+      if (d.shot && d.shot.t < target - 1e-6) g.input.keys.add(S); else if (!released) { g.input.keys.delete(S); g.input.released.add(S); released = true; }
       g._update(DT); g.input.endFrame();
     }
     let ft = 0; let maxH = 0; let minBoard = Infinity; let rimPlane = null; let hits = [];
@@ -57,7 +59,7 @@ const r = await page.evaluate(async ({ spots, errs, params, zone }) => {
       if (d.tracker) { const t = d.tracker; const key = `${t.rimHits}/${t.boardHits}`; if (hits[hits.length-1] !== key) hits.push(key); }
     }
     const ls = d.lastShot;
-    out.push({ spot: [x, z], err: e, zone: ls?.zone, result: ls?.result, dist: +ls?.dist.toFixed(2), jump: +d.lastReleaseJump.toFixed(2), hits: hits.join(' '), apex: +maxH.toFixed(2), rimPlane: rimPlane === null ? null : +rimPlane.toFixed(3) });
+    out.push({ spot: [x, z], kind: ls?.kind, err: e, zone: ls?.zone, result: ls?.result, dist: +ls?.dist.toFixed(2), jump: +d.lastReleaseJump.toFixed(2), hits: hits.join(' '), apex: +maxH.toFixed(2), rimPlane: rimPlane === null ? null : +rimPlane.toFixed(3) });
   }
   return out;
 }, { spots, errs, params, zone });

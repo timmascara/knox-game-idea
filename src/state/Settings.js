@@ -2,6 +2,8 @@
  * Persistent player preferences, stored in localStorage. Every read/write is
  * guarded so the game still runs in private windows or when storage is blocked.
  */
+import { DEFAULT_BINDINGS } from '../core/Bindings.js';
+
 const KEY = 'homecourt.settings.v2';
 
 const DEFAULTS = {
@@ -12,6 +14,7 @@ const DEFAULTS = {
   ambienceVolume: 0.7,
   quality: 'high', // 'low' | 'high'
   fov: 84,
+  bindings: { ...DEFAULT_BINDINGS },
 };
 
 export class Settings {
@@ -27,6 +30,8 @@ export class Settings {
     } catch (e) {
       /* storage unavailable — fall back to defaults */
     }
+    // Actions added since the settings were saved get their defaults.
+    this.data.bindings = { ...DEFAULT_BINDINGS, ...(this.data.bindings || {}) };
   }
 
   save() {

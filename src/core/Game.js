@@ -11,6 +11,8 @@ import { HUD } from '../ui/HUD.js';
 import { Menu } from '../ui/Menu.js';
 import { Tuning } from '../ui/Tuning.js';
 import { clamp } from './MathUtils.js';
+import { PLAYER } from './Constants.js';
+import { codeLabel } from './Bindings.js';
 
 /**
  * Top-level orchestrator: owns the renderer + scene, constructs every system,
@@ -92,6 +94,8 @@ export class Game {
     this.input = new Input(this.renderer.domElement);
     this.input.sensitivity = this.settings.get('sensitivity');
     this.input.invertY = this.settings.get('invertY');
+    this.input.setBindings(this.settings.get('bindings'));
+    this._refreshHints();
     this.input.onLockChange = (locked) => {
       if (locked) {
         this.input.allowUnlocked = false;
@@ -142,7 +146,7 @@ export class Game {
     this.input.requestLock();
     this.menu.hide();
     this.hud.show();
-    this.hud.setHint('Walk into the ball to pick it up · E to grab · hold Space to shoot');
+    this.hud.setHint(this.dribble.hints.loose);
     // Hosts that refuse pointer lock (an embedded frame): play unlocked.
     setTimeout(() => {
       if (this.started && !this.input.locked && this.paused) {
@@ -166,7 +170,22 @@ export class Game {
     this.menu.showPause();
   }
 
+  /** Hint strings follow the bindings. */
+  _refreshHints() {
+    const b = this.input.bindings;
+    const L = (a) => codeLabel(b[a]);
+    this.dribble.hints = {
+      loose: `Walk into the ball to pick it up · ${L('pickup')} to grab`,
+      hold: `${L('crossover')}: dribble right · ${L('between')}: dribble left · hold ${L('shoot')} to shoot · ${L('drop')}: drop`,
+    };
+  }
+
   _applySetting(key, val) {
+    if (key === 'bindings') {
+      this.input.setBindings(val);
+      this._refreshHints();
+      return;
+    }
     if (key === 'sensitivity') this.input.sensitivity = val;
     else if (key === 'invertY') this.input.invertY = val;
     else if (key === 'fov') this.cameraRig.setFov(val);
@@ -213,6 +232,10 @@ export class Game {
     const look = this.input.consumeLook(dt);
     this.cameraRig.applyLook(look.dx, look.dy);
 
+    // A plain jump: any time the body is free (not mid-shot).
+    if (this.input.pressedAction('jump') && !this.player.lockMove && this.player.grounded) {
+      if (this.player.jump(PLAYER.jumpSpeed)) this.audio.footstep(0.9);
+    }
     this.player.update(dt, this.input, this.cameraRig);
     if (this.player.lastLandImpact > 0) {
       this.cameraRig.triggerLandDip(this.player.lastLandImpact * 0.12);
