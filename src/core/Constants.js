@@ -163,23 +163,27 @@ export const SHOT = {
   airShort: 0.45, // airballs fall this far short of the front rim
   airDrop: 0.18, // and this far below rim height
 
-  // Layups: inside `layupRange` of the rim the shoot button is a layup — a
-  // quicker, one-handed drive to the rim with a forgiving window. Uncontested
-  // (there is nothing to contest yet) it goes in whenever the release is
-  // within `layupWindow`; a contested one (a hook for later) only inside
-  // `layupContestedWindow`. Misses catch the front iron.
+  // Layups: inside `layupRange` of the rim, the jump key with the ball is
+  // the takeoff — the body leaps at the rim, the ball is scooped up the
+  // shooting side — and a tap of the shoot key while airborne releases it.
+  // The ideal release is `layupReleaseAfterApex` past the top of the jump;
+  // uncontested (there is nothing to contest yet) it goes in whenever the
+  // tap is within `layupWindow` of that; contested (a hook for later) only
+  // inside `layupContestedWindow`. Misses catch the front iron. Land without
+  // tapping and you come down holding the ball.
   layupRange: 2.6,
-  layupSetTime: 0.18,
-  layupReleaseTime: 0.52,
-  layupMeterTime: 0.72,
-  layupJumpSpeed: 3.8,
+  layupJumpSpeed: 5.0, // a real leap: ~0.7 m, 0.55 s in the air
+  layupReleaseAfterApex: 0.08, // the ideal tap, seconds after the top of the jump
   layupWindow: 0.09,
   layupContestedWindow: 0.03,
-  layupPoint: [0.24, 1.30, 0.38], // gathered at the right hip
-  layupCarry: [0.26, 1.95, 0.44], // carried up beside the head, in view
-  layupExtension: 0.42,
+  // The scoop is one continuous sweep from wherever the ball is (hip, or
+  // mid-bounce) up the shooting side to beside the head, then the arm
+  // extends at the rim. No pause on the way: a stop at the chest made the
+  // ball rush and stall, which read as a stutter.
+  layupCarry: [0.24, 1.92, 0.46], // beside the head, where the extension starts
+  layupCarrySpeed: 2.6, // ball speed passing the carry point, into the extension
+  layupExtension: 0.30, // shorter than the jumper's: a flick at the rim, not a full arm
   layupMinApex: 0.35, // the soft drop peaks this far above the rim
-  layupDecel: 6.0, // a layup keeps a step of momentum, not a sprint's worth
   frontDepth: 0.04, // a missed layup's centre falls this short of the front tube
 };
 

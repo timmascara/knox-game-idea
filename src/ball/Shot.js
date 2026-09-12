@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SHOT, HOOP, BALL } from '../core/Constants.js';
+import { SHOT, HOOP, BALL, PLAYER } from '../core/Constants.js';
 import { clamp } from '../core/MathUtils.js';
 
 /**
@@ -35,12 +35,22 @@ export function zoneForLayup(err, contested = false) {
   return Math.abs(err) <= w ? ZONE.GREEN : ZONE.FRONT;
 }
 
+/**
+ * A layup's clock runs from the takeoff: the ideal tap is just past the top
+ * of the jump, and the meter runs out when the feet land.
+ */
+export function layupTiming() {
+  const tApex = SHOT.layupJumpSpeed / -PLAYER.gravity;
+  return { releaseTime: tApex + SHOT.layupReleaseAfterApex, meterTime: 2 * tApex, tApex };
+}
+
 /** The meter's band layout for each kind of shot: [maxAbsError, zone] outward from the ideal. */
 export function meterSpec(kind, contested = false) {
   if (kind === 'layup') {
+    const { releaseTime, meterTime } = layupTiming();
     return {
-      releaseTime: SHOT.layupReleaseTime,
-      meterTime: SHOT.layupMeterTime,
+      releaseTime,
+      meterTime,
       zones: [[contested ? SHOT.layupContestedWindow : SHOT.layupWindow, ZONE.GREEN], [Infinity, ZONE.FRONT]],
     };
   }

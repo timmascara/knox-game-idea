@@ -5,7 +5,7 @@ import { MOVES, makeContext } from './Moves.js';
 import { HAND_POSES } from '../player/HandModel.js';
 import { DRIBBLE as D, BALL, SHOT, PLAYER } from '../core/Constants.js';
 import { clamp, damp, angleDelta, smoothstep } from '../core/MathUtils.js';
-import { ZONE, zoneFor, zoneForLayup, meterSpec, aimFor, solveLaunch, ShotTracker, RESULT_LABEL, yawToward } from './Shot.js';
+import { ZONE, zoneFor, zoneForLayup, meterSpec, layupTiming, aimFor, solveLaunch, ShotTracker, RESULT_LABEL, yawToward } from './Shot.js';
 
 /**
  * The dribble engine. Owns possession (loose / gather / hold / dribbling),
@@ -243,9 +243,15 @@ export class DribbleController {
       return;
     }
     if (this.state === State.SHOT) {
-      // Button-up is the release. A tap (already up when the shot began)
-      // releases at once — a terrible early shot, as it should be.
-      if (input.releasedAction('shoot') || !input.down('shoot')) this._releaseShot();
+      if (this.shot.kind === 'layup') {
+        // A layup releases on a fresh press of the shoot key while airborne
+        // (the takeoff was the jump key, or an earlier press of this one).
+        if (input.pressedAction('shoot')) this._releaseShot();
+      } else if (input.releasedAction('shoot') || !input.down('shoot')) {
+        // A jumper releases on button-up. A tap (already up when the shot
+        // began) releases at once — a terrible early shot, as it should be.
+        this._releaseShot();
+      }
       return;
     }
     if (this.state === State.RELEASE) return;
@@ -584,14 +590,31 @@ export class DribbleController {
     };
   }
 
-  /** The shoot button: a layup inside `layupRange` of the rim, else the jumper. */
+  /** True when the ball is in hand, on the ground, inside layup range of `hoop`. */
+  _inLayupRange(hoop) {
+    if (!hoop || !this.player.grounded) return false;
+    const feet = this.player.position;
+    return Math.hypot(hoop.rimCenter.x - feet.x, hoop.rimCenter.z - feet.z) < SHOT.layupRange;
+  }
+
+  /**
+   * The jump key with the ball near the rim: the layup takeoff. Returns true
+   * when it took the jump, so the game does not also do a plain hop.
+   */
+  tryLayupTakeoff() {
+    if (this.state === State.LOOSE || this.state === State.GATHER || this.shot) return false;
+    const hoop = this._pickHoop();
+    if (!this._inLayupRange(hoop)) return false;
+    this._startShot('layup', hoop);
+    return true;
+  }
+
+  /** The shoot key: near the rim it is also a layup takeoff (then tap again), else the jumper. */
   _requestShot() {
     if (this.state === State.LOOSE || this.state === State.GATHER || this.shot) return;
     const hoop = this._pickHoop();
     if (!hoop) return;
-    const feet = this.player.position;
-    const dist = Math.hypot(hoop.rimCenter.x - feet.x, hoop.rimCenter.z - feet.z);
-    this._startShot(dist < SHOT.layupRange ? 'layup' : 'jumper', hoop);
+    this._startShot(this._inLayupRange(hoop) ? 'layup' : 'jumper', hoop);
   }
 
   /**
@@ -601,21 +624,29 @@ export class DribbleController {
    */
   _shotSpec(kind) {
     if (kind === 'layup') {
+      const { releaseTime, meterTime } = layupTiming();
       return {
         kind,
-        setTime: SHOT.layupSetTime,
-        releaseTime: SHOT.layupReleaseTime,
-        meterTime: SHOT.layupMeterTime,
+        // The takeoff *is* t = 0: the feet leave the floor at once, the ball
+        // sweeps up the shooting side in one motion, and the ideal tap is
+        // just past the apex.
+        setTime: 0,
+        releaseTime,
+        meterTime,
         jumpSpeed: SHOT.layupJumpSpeed,
-        set: SHOT.layupPoint,
+        jumpAt: 0,
+        set: null, // no pause between the scoop and the carry
         load: SHOT.layupCarry,
+        loadSpeed: SHOT.layupCarrySpeed,
         extension: SHOT.layupExtension,
-        decel: SHOT.layupDecel,
+        decel: 0, // airborne from the first tick: momentum carries to the rim
         // One hand under the ball, palm up: a finger roll.
-        dirSet: dirOf(0.05, -0.9, -0.43),
+        dirSet: dirOf(0.12, -0.85, -0.5),
         dirLoad: dirOf(0.03, -0.93, -0.36),
         dirRel: dirOf(0, -0.96, -0.28),
         fingers: (u) => _v2.set(0.05, 0.6, 0.8),
+        sway: { lateral: 0.35, roll: 0.5 }, // the body leans into the drive
+        landsWithBall: true, // no tap before the feet land → come down holding it
         zoneFn: (err) => zoneForLayup(err, this.contested),
         meter: meterSpec('layup', this.contested),
       };
@@ -628,11 +659,15 @@ export class DribbleController {
       jumpSpeed: SHOT.jumpSpeed,
       set: SHOT.setPoint,
       load: SHOT.loadPoint,
+      loadSpeed: SHOT.loadSpeed,
       extension: SHOT.extension,
       decel: PLAYER.shotDecel,
       dirSet: dirOf(0.15, -0.72, -0.68),
       dirLoad: dirOf(0.08, -0.8, -0.6),
       dirRel: dirOf(0.02, -0.88, -0.47),
+      jumpAt: null, // timed so the hop's apex lands on the ideal release
+      sway: null,
+      landsWithBall: false,
       // Fingers straight up the back of the ball at the set (wrist cocked,
       // forearm vertical beneath it), rolling forward toward the rim as the
       // arm extends: the wrist snap. (An up-forward hint at the set is nearly
@@ -662,7 +697,7 @@ export class DribbleController {
     const pv = this.player.velocity;
     const sp = Math.hypot(pv.x, pv.z);
     const canJump = this.player.grounded;
-    const tJump = spec.releaseTime - spec.jumpSpeed / -PLAYER.gravity;
+    const tJump = spec.jumpAt ?? spec.releaseTime - spec.jumpSpeed / -PLAYER.gravity;
     const origin = new THREE.Vector3(feet.x, feet.y, feet.z);
     if (sp > 0.05) {
       const a = spec.decel;
@@ -676,7 +711,7 @@ export class DribbleController {
     const toWorldA = (l) => new THREE.Vector3(origin.x, origin.y + l.y, origin.z).addScaledVector(ax.right, l.x).addScaledVector(ax.fwd, l.z);
     const toLocalA = (w) => new THREE.Vector3(w.dot(ax.right), w.y, w.dot(ax.fwd));
 
-    const set = new THREE.Vector3().fromArray(spec.set);
+    const set = spec.set ? new THREE.Vector3().fromArray(spec.set) : null;
     const load = new THREE.Vector3().fromArray(spec.load);
     // The extension runs along the launch direction, which depends on where
     // the extension ends: a couple of fixed-point iterations settle it.
@@ -697,26 +732,29 @@ export class DribbleController {
     const speed = vRel.length();
     // Constant-acceleration extension: its duration follows from its length
     // and the speeds at either end, so the arm snaps harder for a long shot.
-    const tau = clamp((2 * spec.extension) / (SHOT.loadSpeed + speed), 0.06, 0.2);
+    const tau = clamp((2 * spec.extension) / (spec.loadSpeed + speed), 0.06, 0.2);
     const tLoad = spec.releaseTime - tau;
 
     const p0 = this.ballLocal.clone();
     const v0 = this.ballVelLocal.clone();
     p0.y = Math.max(p0.y, this.floorLocal + 0.02);
-    const tSet = clamp(0.14 + p0.distanceTo(set) * 0.14 + v0.length() * 0.015, spec.setTime - 0.04, tLoad - 0.12);
+    // With a set point the ball pauses there (the jumper's set); without one
+    // it sweeps straight up to the load point (the layup's scoop).
+    const tSet = set ? clamp(0.14 + p0.distanceTo(set) * 0.14 + v0.length() * 0.015, spec.setTime - 0.04, tLoad - 0.12) : tLoad * 0.5;
     // Hand contact direction at the start: wherever the carrying hand is now.
     let dir0;
     if (this.state === State.CONTACT && this.contact) dir0 = this.contact.dirAt(this.t, new THREE.Vector3());
     else if (this.state === State.FLIGHT && this.plan) dir0 = this.plan.catchDir.clone();
     else dir0 = dirOf(0.92, -0.18, -0.28);
     const over = rel.clone().addScaledVector(dirL, 0.08);
-    const path = new Contact([
-      { p: p0, v: v0, t: 0, dir: dir0 },
-      { p: set, v: new THREE.Vector3(0, 0.5, 0), t: tSet, dir: spec.dirSet },
-      { p: load, v: dirL.clone().multiplyScalar(SHOT.loadSpeed), t: tLoad, dir: spec.dirLoad },
+    const waypoints = [{ p: p0, v: v0, t: 0, dir: dir0 }];
+    if (set) waypoints.push({ p: set, v: new THREE.Vector3(0, 0.5, 0), t: tSet, dir: spec.dirSet });
+    waypoints.push(
+      { p: load, v: dirL.clone().multiplyScalar(spec.loadSpeed), t: tLoad, dir: spec.dirLoad },
       { p: rel, v: vRel, t: spec.releaseTime, dir: spec.dirRel },
-      { p: over, v: new THREE.Vector3(), t: spec.releaseTime + SHOT.overhold, dir: spec.dirRel },
-    ]);
+      { p: over, v: new THREE.Vector3(), t: spec.releaseTime + SHOT.overhold, dir: spec.dirRel }
+    );
+    const path = new Contact(waypoints);
 
     this.shot = {
       kind,
@@ -746,8 +784,35 @@ export class DribbleController {
     this.queue.length = 0;
     this.sign = 1;
     this.hud?.setHand(1);
-    this.hud?.setHint(null);
+    this.hud?.setHint(spec.kind === 'layup' ? this.hints.layup : null);
     this.hud?.meter?.show(spec.meter);
+    // A layup leaves the floor on the very tick it starts.
+    if (tJump <= 0 && !this.shot.jumped) {
+      this.shot.jumped = true;
+      if (this.player.jump(spec.jumpSpeed)) this.audio?.footstep(0.8);
+    }
+  }
+
+  /**
+   * A layup with no tap before the feet land: the body comes down with the
+   * ball and gathers it back into the hold. No shot, no result.
+   */
+  _landWithBall() {
+    const s = this.shot;
+    if (!s) return;
+    const p0 = this.ballLocal.clone();
+    const v0 = this.ballVelLocal.clone();
+    this.contact = new Contact([
+      { p: p0, v: v0, t: 0, dir: s.dirRel.clone() },
+      { p: HOLD_POINT.clone(), v: new THREE.Vector3(), t: 0.28, dir: dirOf(0.9, -0.15, -0.3) },
+    ]);
+    this.shot = null;
+    this._shooting = false;
+    this.player.lockMove = false;
+    this.state = State.GATHER;
+    this.t = 0;
+    this.hud?.meter?.hide();
+    this.hud?.setHint(this.hints.hold);
   }
 
   _updateShot(dt) {
@@ -763,7 +828,11 @@ export class DribbleController {
     else s.path.velocityAt(s.t, this.ballVelLocal);
     this.ballLocal.y = Math.max(this.ballLocal.y, this.floorLocal);
     this.hud?.meter?.set(s.t / s.spec.meterTime);
-    if (s.t >= s.spec.meterTime) this._releaseShot();
+    if (s.t >= s.spec.meterTime) {
+      if (s.spec.landsWithBall && this.player.grounded) this._landWithBall();
+      else if (!s.spec.landsWithBall) this._releaseShot();
+      else if (s.t > s.spec.meterTime + 0.5) this._landWithBall(); // never landed (fell off the court?) — give up
+    }
   }
 
   /** Button-up: grade the timing, aim for that outcome, plan the flick. */
@@ -947,8 +1016,17 @@ export class DribbleController {
     let ver = 0;
     let roll = 0;
     if (this.state === State.SHOT && this.shot) {
-      const u = clamp(this.shot.t / this.shot.tSet, 0, 1);
-      ver = -0.035 * Math.sin(u * Math.PI);
+      const sw = this.shot.spec.sway;
+      if (sw) {
+        // The drive: lean into the rim through the rise, settle after release.
+        const u = smoothstep(clamp(this.shot.t / this.shot.spec.releaseTime, 0, 1));
+        lat = sw.lateral * D.swayLateral * u;
+        roll = sw.roll * D.swayRoll * u;
+        ver = -0.02 * Math.sin(clamp(this.shot.t / 0.12, 0, 1) * Math.PI);
+      } else {
+        const u = clamp(this.shot.t / this.shot.tSet, 0, 1);
+        ver = -0.035 * Math.sin(u * Math.PI);
+      }
     } else if (this.plan && this._swayPlan && (this.state === State.CONTACT || this.state === State.FLIGHT)) {
       const s = this._swayPlan;
       let k;

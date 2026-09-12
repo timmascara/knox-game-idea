@@ -50,11 +50,11 @@ the mouse, and embedded frames refuse to.
 | --- | --- |
 | `W A S D` | Move · `Shift` sprint (speed dribble, ball pushed out ahead) |
 | Mouse | Look (the ball stays in front of your *body*, not your head) |
-| **Right click (hold)** | **Shoot** — jumper, or a layup near the rim; let go in the green |
-| `Space` | Jump |
+| **`K` (hold)** | **Shoot** — let go in the green |
+| **`J`** | **Jump** — with the ball near the rim: the layup takeoff, then tap `K` to release |
 | `E` | Pick up the ball · hold ↔ dribble |
 | **Left click** | Crossover · with `S` held: **step-back** |
-| `V` | Between the legs |
+| **Right click** | Between the legs |
 | `Q` | Behind the back |
 | `F` | In & out |
 | `R` | Hesitation (hang dribble, then explode) |
@@ -74,12 +74,14 @@ ball gathers into both hands, sets beside your eye and rises with a hop
 while the meter beside the crosshair fills. Let go in the tiny green band
 and it swishes; just outside and it catches back iron and pops out;
 further and it comes off the glass; further still and it is an airball.
-Inside about two and a half metres of the rim the same button is a layup:
-quicker, one-handed, a wide window that nearly always goes and a front-rim
-miss when it doesn't. Every zone is deterministic. The body squares up to
-the basket by itself and keeps its momentum; your head stays free. A made
-shot drops out of the net and settles under the rim. Every key above can
-be rebound from the pause menu.
+Inside about two and a half metres of the rim, `J` with the ball is a
+layup: you leap at the basket, the ball is scooped up your shooting side,
+and a tap of `K` at the top of the jump lets it go — one-handed, a wide
+window that nearly always goes, a front-rim miss when it doesn't, and if
+you never tap you come down holding the ball. Every zone is deterministic.
+The body squares up to the basket by itself and keeps its momentum; your
+head stays free. A made shot drops out of the net and settles under the
+rim. Every key above can be rebound from the pause menu.
 
 Working on this project? Read **[CLAUDE.md](CLAUDE.md)** first — it records
 the invariants, the conventions, what is deliberately absent, and what the

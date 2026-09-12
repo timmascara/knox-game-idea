@@ -118,13 +118,19 @@ const result = await page.evaluate(() => {
   check(catches >= 6 && catches <= 10, `pound cadence off: ${catches} catches in 5 s`);
 
   // 3) Every move hands off to the right hand and returns to a pound.
+  // Each move's input comes from the live binding map, so a default change
+  // cannot silently turn a move test into a no-op.
+  const keyFor = (action) => {
+    const c = g.input.bindings[action];
+    return c === 'Mouse0' ? 'left' : c === 'Mouse2' ? 'right' : c;
+  };
   const moves = [
-    ['crossover', 'left', -1],
-    ['between', 'KeyV', 1],
-    ['behind', 'KeyQ', -1],
-    ['inout', 'KeyF', -1],
-    ['hesitation', 'KeyR', -1],
-    ['stepback', 'left', 1, ['KeyS']],
+    ['crossover', keyFor('crossover'), -1],
+    ['between', keyFor('between'), 1],
+    ['behind', keyFor('behind'), -1],
+    ['inout', keyFor('inout'), -1],
+    ['hesitation', keyFor('hesitation'), -1],
+    ['stepback', keyFor('crossover'), 1, ['KeyS']],
   ];
   const handoffs = [];
   for (const [name, key, expectSign, hold] of moves) {
@@ -262,10 +268,12 @@ const result = await page.evaluate(() => {
   check(d.stats.maxReleaseJump < 0.5, `release velocity mismatch ${d.stats.maxReleaseJump.toFixed(2)} m/s`);
   check(g.player.grounded && !g.player.lockMove, 'player still locked after the shot');
 
-  // 9) Layups. Drive in from the free-throw line; inside layupRange the shoot
-  //    button is a layup. A release near the ideal goes; a late one catches the front iron.
-  for (const [release, wantMade, phase] of [[0.52, true, 'layup'], [0.66, false, 'layup-late']]) {
-    window.__phase = phase;
+  // 9) Layups: J then K. Drive in from the free-throw line; inside layupRange
+  //    the jump key is the takeoff and a tap of the shoot key releases. A tap
+  //    near the top of the jump goes; a late one catches the front iron; no
+  //    tap at all lands holding the ball.
+  const JUMP = g.input.bindings.jump;
+  const driveIn = () => {
     faceHoop(1.2, 7.8);
     g.ball.setControlled(); d.state = 'hold'; d.plan = null; d.flight = null; d.contact = null; d._ft = null; d.tracker = null;
     d._updateFrame(0, true); d.ballLocal.set(0, 1.14, 0.40); d.ballVelLocal.set(0, 0, 0);
@@ -274,13 +282,38 @@ const result = await page.evaluate(() => {
     let guard = 0;
     while (guard++ < 400 && Math.hypot(g.player.position.x, g.player.position.z - 12.425) > 2.3) tick(1, ['KeyW']);
     check(d.dribbling, `expected to still be dribbling on the drive (${d.state})`);
-    ls = shoot(release, ['KeyW']);
+  };
+  const layup = (tapAt) => {
+    g.input.pressed.add(JUMP);
+    tick(1, ['KeyW', JUMP]);
+    check(d.state === 'shot' && d.shot?.kind === 'layup', `jump near the rim should take off into a layup (${d.state}/${d.shot?.kind})`);
+    check(!g.player.grounded, 'layup takeoff should leave the floor at once');
+    let guard = 0;
+    while (d.state === 'shot' && d.shot.t < tapAt - 1e-6 && guard++ < 400) tick(1, ['KeyW']);
+    if (tapAt !== null && d.state === 'shot') { g.input.pressed.add(SHOOT); tick(1, ['KeyW', SHOOT]); }
+    guard = 0;
+    while (d.state !== 'loose' && d.state !== 'hold' && guard++ < 400) tick(1, ['KeyW']);
+    for (let i = 0; i < 900 && d.tracker; i++) tick(1);
+    return d.lastShot;
+  };
+  const layupIdeal = window.__CONST.SHOT.layupJumpSpeed / 18 + window.__CONST.SHOT.layupReleaseAfterApex;
+  for (const [tapAt, wantMade, phase] of [[layupIdeal, true, 'layup'], [layupIdeal + 0.14, false, 'layup-late']]) {
+    window.__phase = phase;
+    driveIn();
+    const before = d.stats.shots.length;
+    ls = layup(tapAt);
     shots.push(`${ls?.kind}:${ls?.zone}:${ls?.result}`);
-    check(ls?.kind === 'layup', `expected a layup inside the range, got ${ls?.kind}`);
+    check(d.stats.shots.length === before + 1 && ls?.kind === 'layup', `expected one layup, got ${ls?.kind}`);
     const made = ls?.result === 'swish' || ls?.result === 'made';
-    check(made === wantMade, `layup released at ${release}s should ${wantMade ? 'go in' : 'miss'}, got ${ls?.zone}:${ls?.result}`);
+    check(made === wantMade, `layup tapped at ${tapAt}s should ${wantMade ? 'go in' : 'miss'}, got ${ls?.zone}:${ls?.result}`);
     for (let i = 0; i < 300 && !g.player.grounded; i++) tick(1);
   }
+  window.__phase = 'layup-notap';
+  driveIn();
+  const shotsBefore = d.stats.shots.length;
+  layup(null);
+  for (let i = 0; i < 120 && d.state === 'gather'; i++) tick(1);
+  check(d.state === 'hold' && d.stats.shots.length === shotsBefore, `landing without a tap should come down holding the ball (${d.state}, shots ${d.stats.shots.length - shotsBefore})`);
 
   // 10) A plain jump while moving, without shooting.
   window.__phase = 'jump';

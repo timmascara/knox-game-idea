@@ -172,32 +172,46 @@ in `SHOT` in `Constants.js`; the Tab panel has a SHOT TUNING section.
 
 **Input.** Every action goes through the binding map (`src/core/Bindings.js`,
 stored in Settings, edited in the pause menu's Controls panel; game code
-asks `input.down('shoot')` / `pressedAction('jump')`, never a key). Defaults:
-shoot = hold right mouse, jump = Space, crossover = left mouse, between =
-V, behind Q, in&out F, hesitation R, low C, pick up E, drop G, sprint Shift.
-WASD, Tab and Esc are reserved. Hold shoot to start (from the hold or
-straight out of a live dribble, whichever hand), let go to release. A tap
-releases immediately (an airball, as in 2K). Movement input locks for the
-duration but the feet keep momentum — a jumper decelerates at
-`PLAYER.shotDecel` (10 m/s²), a layup at `SHOT.layupDecel` (6, about a
-step of carry; at 1.5 the drive ran straight through into the pole) — and the body
-squares up to the basket on its own while the head stays free (the handle
-frame's yaw is driven by the hoop direction during a shot, not the camera).
-The plain jump (`PLAYER.jumpSpeed`) works any time the body is not
-mid-shot; jumping while dribbling leaves the bounce path on the floor, by
-the handle frame's design.
+asks `input.down('shoot')` / `pressedAction('jump')`, never a key). Defaults
+(the owner's choice, second play-test): **shoot = K, jump = J**, crossover
+= left mouse, between = right mouse, behind Q, in&out F, hesitation R, low
+C, pick up E, drop G, sprint Shift. WASD, Tab and Esc are reserved.
+`BINDINGS_VERSION` in `Bindings.js` is bumped when the defaults change, and
+Settings then replaces a saved layout with the new one — the owner's
+browser had the old defaults persisted. Hold K to start a jumper (from the
+hold or straight out of a live dribble, whichever hand), let go to release.
+A tap releases immediately (an airball, as in 2K). Movement input locks for
+the duration but the feet keep momentum — a jumper decelerates at
+`PLAYER.shotDecel` (10 m/s²) — and the body squares up to the basket on
+its own while the head stays free (the handle frame's yaw is driven by the
+hoop direction during a shot, not the camera). The plain jump
+(`PLAYER.jumpSpeed`) works any time the body is not mid-shot; jumping while
+dribbling leaves the bounce path on the floor, by the handle frame's design.
 
-**Layups.** Inside `SHOT.layupRange` (2.6 m) of the rim the shoot button is
-a layup instead: same machinery, a `_shotSpec('layup')` — quicker timeline
-(`layupReleaseTime` 0.52 s, meter to 0.72), the ball gathered at the right
-hip and carried up beside the head, a bigger hop, momentum kept, one hand
-under the ball (finger roll). Grading is two-zone: within `layupWindow`
-(±0.09 s) it goes — a soft drop over the front rim peaking `layupMinApex`
-above it (30/30 from ten spots in the lab, all swishes) — otherwise it is
-short onto the front iron (`ZONE.FRONT`, 30/30 misses). "Contested" in the
-owner's spec means a defender at the rim; there are no defenders, so the
-hook is `DribbleController.contested` (tightens the window to
-`layupContestedWindow`) and nothing sets it yet.
+**Layups are J then K.** Inside `SHOT.layupRange` (2.6 m) of the rim,
+the jump key with the ball is the takeoff (`tryLayupTakeoff`, asked by the
+game before it does a plain hop): the feet leave the floor on that tick at
+`layupJumpSpeed` (4.6 → ~0.6 m, half a second in the air), momentum carries
+the body at the rim (no deceleration: it is airborne from t = 0), the ball
+is scooped from wherever it was to `layupGather` beside the chest and up
+to `layupCarry` beside the head in one hand, palm up, and the camera leans
+into the drive. A *tap* of the shoot key while airborne releases; the
+ideal tap is `layupReleaseAfterApex` (0.08 s) past the top of the jump
+(`layupTiming()` in `Shot.js` derives the clock from the jump speed), so
+the natural rhythm is J, then K a third of a second later. Grading is
+two-zone: within `layupWindow` (±0.09 s) it goes — a soft drop over the
+front rim peaking `layupMinApex` above it — otherwise short onto the front
+iron (`ZONE.FRONT`). No tap before the feet land → `_landWithBall`: the
+ball gathers back into the hold, no shot, no result. The shoot key near
+the rim on the ground is *also* a takeoff (so K, K works) rather than a
+no-timing auto-layup, which would have made the window meaningless. The
+first build had the layup as hold-and-release on the shoot key with the
+hop timed inside it; the owner found they were already back on the floor
+by the release and asked for J-then-K.
+
+"Contested" in the owner's spec means a defender at the rim; there are no
+defenders, so the hook is `DribbleController.contested` (tightens the
+window to `layupContestedWindow`) and nothing sets it yet.
 
 **The timeline is fixed** (`SHOT.releaseTime` = 0.62 s is the green centre,
 the meter fills to `meterTime` = 0.84 s and auto-releases there). The whole
@@ -449,11 +463,13 @@ paste it back).
 - **The synthesised sounds are placeholders awaiting recorded assets.** Drop
   files in `src/assets/audio/`; see the Audio section. Do not polish the
   synths.
-- **Controls are rebindable; defaults are shoot = right mouse (hold), jump =
-  Space, between = V.** The owner asked for a jump key that feels natural
-  while moving, and Space is that key on every FPS, so the shot moved to a
-  mouse button (precise release timing) and between-the-legs to V. Nothing
-  reads physical keys except WASD and the menu.
+- **Controls are rebindable; defaults are shoot = K, jump = J** (the
+  owner's own choice after two play-tests; between-the-legs went back to
+  right mouse). Nothing reads physical keys except WASD and the menu. Bump
+  `BINDINGS_VERSION` when defaults change so saved layouts migrate.
+- **Layups are J (takeoff) then a K tap (release), never a hold.** Owner's
+  call: "by then I'm already on the ground". The window sits at the top of
+  the jump.
 - **Always right-handed.** The shot gathers into the right hand whichever
   hand was dribbling.
 - **The body squares up to the basket during a shot** while the head stays

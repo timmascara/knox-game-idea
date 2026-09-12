@@ -6,11 +6,14 @@
  * game checks a physical key directly except WASD movement and the menu's
  * own keys (Tab, Esc).
  */
+/** Bump when the defaults change so saved settings pick up the new layout. */
+export const BINDINGS_VERSION = 2;
+
 export const DEFAULT_BINDINGS = {
-  jump: 'Space',
-  shoot: 'Mouse2',
+  jump: 'KeyJ',
+  shoot: 'KeyK',
   crossover: 'Mouse0',
-  between: 'KeyV',
+  between: 'Mouse2',
   behind: 'KeyQ',
   inout: 'KeyF',
   hesitation: 'KeyR',
@@ -22,8 +25,8 @@ export const DEFAULT_BINDINGS = {
 
 /** Order and wording for the Controls panel and the start-menu list. */
 export const BINDING_LABELS = [
-  ['shoot', 'Shoot (hold, let go in the green)'],
-  ['jump', 'Jump'],
+  ['shoot', 'Shoot · hold, let go in the green · near the rim: release the layup'],
+  ['jump', 'Jump · with the ball near the rim: layup takeoff'],
   ['pickup', 'Pick up · hold ↔ dribble'],
   ['crossover', 'Crossover · with S held: step-back'],
   ['between', 'Between the legs'],

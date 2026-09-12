@@ -43,12 +43,17 @@ const r = await page.evaluate(async ({ spots, errs, params, zone }) => {
   for (const [x, z] of spots) for (const e of errs) {
     hold(x, z);
     const dist0 = Math.hypot(x, 12.425 - z);
-    const target = (dist0 < window.__CONST.SHOT.layupRange ? window.__CONST.SHOT.layupReleaseTime : 0.62) + e;
-    const S = g.input.bindings.shoot;
-    g.input.pressed.add(S); g.input.keys.add(S); g._update(DT); g.input.endFrame();
+    const isLayup = dist0 < window.__CONST.SHOT.layupRange;
+    const layupIdeal = window.__CONST.SHOT.layupJumpSpeed / 18 + window.__CONST.SHOT.layupReleaseAfterApex;
+    const target = (isLayup ? layupIdeal : 0.62) + e;
+    const S = g.input.bindings.shoot; const J = g.input.bindings.jump;
+    // A jumper is hold-then-release; a layup is the jump key, then a tap of the shoot key.
+    g.input.pressed.add(isLayup ? J : S); g.input.keys.add(isLayup ? J : S); g._update(DT); g.input.endFrame(); if (isLayup) g.input.keys.delete(J);
     let guard = 0; let released = false;
-    while (d.state !== 'loose' && guard++ < 400) {
-      if (d.shot && d.shot.t < target - 1e-6) g.input.keys.add(S); else if (!released) { g.input.keys.delete(S); g.input.released.add(S); released = true; }
+    while (d.state !== 'loose' && d.state !== 'hold' && guard++ < 400) {
+      if (isLayup) {
+        if (!released && d.shot && d.shot.t >= target - 1e-6) { g.input.pressed.add(S); released = true; }
+      } else if (d.shot && d.shot.t < target - 1e-6) g.input.keys.add(S); else if (!released) { g.input.keys.delete(S); g.input.released.add(S); released = true; }
       g._update(DT); g.input.endFrame();
     }
     let ft = 0; let maxH = 0; let minBoard = Infinity; let rimPlane = null; let hits = [];

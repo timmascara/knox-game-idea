@@ -286,12 +286,13 @@ const scenarios = {
       let guard = 0;
       while (guard++ < 400 && Math.hypot(g.player.position.x, g.player.position.z - 12.425) > 2.3) { h.press('KeyW'); h.tick(1); h.release('KeyW'); }
       h.sheetBegin(5, 5);
-      const S = g.input.bindings.shoot;
-      g.input.pressed.add(S); g.input.keys.add(S); g.input.keys.add('KeyW'); g._update(1 / 120); g.input.endFrame(); h.sheetAdd();
+      const S = g.input.bindings.shoot; const J = g.input.bindings.jump;
+      const tapAt = window.__CONST.SHOT.layupJumpSpeed / 18 + window.__CONST.SHOT.layupReleaseAfterApex;
+      g.input.pressed.add(J); g.input.keys.add(J); g.input.keys.add('KeyW'); g._update(1 / 120); g.input.endFrame(); g.input.keys.delete(J); h.sheetAdd();
+      let tapped = false;
       for (let i = 1; i < 25; i++) {
         for (let k = 0; k < 4; k++) {
-          const hold = d.shot && d.shot.t < window.__CONST.SHOT.layupReleaseTime - 1e-6;
-          if (hold) g.input.keys.add(S); else if (g.input.keys.has(S)) { g.input.keys.delete(S); g.input.released.add(S); }
+          if (!tapped && d.shot && d.shot.t >= tapAt - 1e-6) { g.input.pressed.add(S); tapped = true; }
           g._update(1 / 120); g.input.endFrame();
         }
         h.sheetAdd();

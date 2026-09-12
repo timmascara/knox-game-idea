@@ -177,6 +177,8 @@ export class Game {
     this.dribble.hints = {
       loose: `Walk into the ball to pick it up · ${L('pickup')} to grab`,
       hold: `${L('crossover')}: dribble right · ${L('between')}: dribble left · hold ${L('shoot')} to shoot · ${L('drop')}: drop`,
+      layup: `${L('shoot')} to release`,
+      nearRim: `${L('jump')} to drive · ${L('shoot')} to release`,
     };
   }
 
@@ -232,9 +234,10 @@ export class Game {
     const look = this.input.consumeLook(dt);
     this.cameraRig.applyLook(look.dx, look.dy);
 
-    // A plain jump: any time the body is free (not mid-shot).
+    // Jump: with the ball near the rim it is the layup takeoff; otherwise a
+    // plain hop, any time the body is free (not mid-shot).
     if (this.input.pressedAction('jump') && !this.player.lockMove && this.player.grounded) {
-      if (this.player.jump(PLAYER.jumpSpeed)) this.audio.footstep(0.9);
+      if (!this.dribble.tryLayupTakeoff() && this.player.jump(PLAYER.jumpSpeed)) this.audio.footstep(0.9);
     }
     this.player.update(dt, this.input, this.cameraRig);
     if (this.player.lastLandImpact > 0) {
