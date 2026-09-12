@@ -1,9 +1,12 @@
-# 🏀 Home Court — dribble lab
+# 🏀 Home Court
 
 A first-person basketball game built with **Three.js** and **Rapier**, being
-built one mastered system at a time. This stage is the handle: an open outdoor
-court, VR-style hands (no arms, no legs), a real basketball, and a dribbling
-engine whose whole job is to make the ball feel like it is on a string.
+built one mastered system at a time. Stage one was the handle: an open
+outdoor court, VR-style hands (no arms, no legs), a real basketball, and a
+dribbling engine whose whole job is to make the ball feel like it is on a
+string. Stage two is the jumper: a 2K-style shot meter, a continuous
+gather-set-release out of any dribble, an arc solved to land exactly where
+the timing says it should, a physics net, and a swish you can hear.
 
 ![Home Court](docs/hero.png)
 
@@ -52,7 +55,8 @@ the mouse, and embedded frames refuse to.
 | **Right click** | Between the legs |
 | `Q` | Behind the back |
 | `F` | In & out |
-| `Space` | Hesitation (hang dribble, then explode) |
+| **`Space` (hold)** | **Jump shot** — let go in the green |
+| `R` | Hesitation (hang dribble, then explode) |
 | `C` (hold) | Low / protect dribble |
 | `G` | Drop the ball |
 | `Tab` | Live tuning panel |
@@ -63,6 +67,14 @@ click** in the left. Moves can be pressed ahead of time: a two-deep buffer
 chains them at the next catch, so *click, Q* is a crossover into a behind-
 the-back, and a pound can be interrupted early in its carry for snappier
 response.
+
+Hold `Space` from a hold or straight out of a dribble and the ball gathers
+into both hands, sets beside your eye and rises with a hop while the meter
+beside the crosshair fills. Let go in the tiny green band and it swishes;
+just outside and it catches back iron and pops out; further and it comes
+off the glass; further still and it is an airball. Every zone is
+deterministic. The body squares up to the basket by itself; your head
+stays free.
 
 Working on this project? Read **[CLAUDE.md](CLAUDE.md)** first — it records
 the invariants, the conventions, what is deliberately absent, and what the
@@ -102,6 +114,37 @@ guards, or — when a move switches hands — moves early to hover over where th
 ball will arrive. Each move also sways the camera a few centimetres (the body
 shifting into the move), which sells it in first person.
 
+## How the shot works
+
+The jumper is one continuous hand path in the same body-relative frame the
+dribble uses: from wherever the ball is (mid-carry, mid-bounce, or held) to
+a set point beside the eye, up to a load point above the forehead, and out
+along the launch direction in a constant-acceleration extension whose end
+velocity *is* the launch that swishes. Position and velocity never snap,
+exactly like a dribble catch. The hop is timed so its apex lands on the
+ideal release.
+
+Letting go of the button grades the timing into a zone and replans a short
+wrist-flick from the ball's current state to the launch that zone's aim
+point needs — rim centre for a swish, just past the back tube for back
+iron, high on the far side of the glass for a bank miss, short and low for
+an airball — then re-solves the launch from the ball's actual position and
+hands it to the physics engine with backspin. The solver is closed-form,
+includes the ball's air damping, and lands within millimetres, so a green
+really is a swish from anywhere on the court; the rim, the glass and the
+floor decide the rest.
+
+After release a tracker watches the flight: rim and board contacts come
+from the physics engine, a make is confirmed only once the ball has
+descended through the rim plane inside the hoop and is clearly below it,
+and the HUD calls it — SWISH, BUCKET, BACK IRON, OFF THE GLASS, AIRBALL.
+
+The net is a verlet cloth rendered as real cord geometry. The ball pushes
+its cords apart and drags it down on the way through, the net slows the
+ball a little (that drag is much of what makes a swish read as a swish),
+whips back and swings. The swish sound is synthesised from that contact:
+a cord brush, a lower whoosh from the net body, a few cord snaps.
+
 ### Project layout
 
 ```
@@ -110,12 +153,13 @@ src/
   physics/      Physics — thin Rapier world wrapper
   player/       Player (kinematic capsule) · CameraRig (look + body sway) · HandModel (rigged hand) · Hands (the pair, world-space)
   ball/         Basketball (procedural 8-panel ball) · BounceMath (Flight solver + Hermite Contact)
-                Moves (the move library, one cycle plan each) · DribbleController (possession, cycle, buffer, hands, sway)
-  world/        World (open court, sun, horizon) · Court · Hoop · Net · Sky
-  audio/        AudioManager — synthesised bounce / catch / squeak / footsteps / wind
-  ui/           HUD · Menu · Tuning · styles
+                Moves (the move library, one cycle plan each) · DribbleController (possession, cycle, buffer, the jumper, hands, sway)
+                Shot (arc solver, timing zones, outcome aim points, make/miss tracker)
+  world/        World (open court, sun, horizon) · Court · Hoop · Net (verlet cord mesh) · Sky
+  audio/        AudioManager — synthesised bounce / catch / rim / glass / swish / squeak / footsteps / wind
+  ui/           HUD · ShotMeter · Menu · Tuning · styles
   state/        Settings (localStorage)
-scripts/        smoke.mjs (headless test) · capture.mjs (contact sheets of any move)
+scripts/        smoke.mjs (headless test) · capture.mjs (contact sheets of any move or the shot) · shots.mjs (shot lab)
 ```
 
 ### The hands and the ball
@@ -145,8 +189,9 @@ scripts/        smoke.mjs (headless test) · capture.mjs (contact sheets of any 
 npm run build          # production bundle to dist/
 npm run preview        # serve the build on http://127.0.0.1:4173
 npm run test:smoke     # headless Chromium: boots, dribbles, checks invariants
-node scripts/capture.mjs all   # contact sheets of every move → screenshots/
+node scripts/capture.mjs all   # contact sheets of every move and the shot → screenshots/
 node scripts/capture.mjs poses # the rigged hand in every pose, close up
+ZONE=green node scripts/shots.mjs   # shot lab: fire a timing zone from many spots, report what happened
 ```
 
 To re-rig the hand from the source sculpt (e.g. after tweaking joint
@@ -154,28 +199,33 @@ placement): `python3 scripts/rig_hand.py <hand.obj> src/assets/hand_right.glb`
 (needs `numpy`).
 
 The smoke test pumps the fixed-step loop through pickup, a pound rhythm,
-every move, sprinting, the low dribble, a buffered combo, and a drop and
-chase, and asserts: the ball never dips under the court, its velocity is
-continuous across catch and release, the palm stays on the ball while
-carrying, every move hands off to the intended hand and returns to a pound,
-and nothing goes non-finite. `capture.mjs` renders deterministic 20-frame
+every move, sprinting, the low dribble, a buffered combo, a drop and
+chase, and five shots (a green from the hold, a green pull-up out of a
+running dribble, a late, a very early and a slightly late release), and
+asserts: the ball never dips under the court, its velocity is continuous
+across catch and release and through the whole jumper, the palm stays on
+the ball while carrying and shooting, every move hands off to the intended
+hand and returns to a pound, each release lands in its zone, and nothing
+goes non-finite. `capture.mjs` renders deterministic 20-frame
 contact sheets so a move can be reviewed frame by frame without a GPU.
 
 ---
 
 ## Tuning
 
-`Tab` opens sliders over every number in `DRIBBLE` (`src/core/Constants.js`):
-dribble heights, ball offsets, restitution, catch rise speed, push depth,
-handle lag, per-move carry times, sway amplitudes. Changes apply live and are
-not persisted — when something feels right, write it into Constants.
+`Tab` opens sliders over every number in `DRIBBLE` and the feel numbers in
+`SHOT` (`src/core/Constants.js`): dribble heights, ball offsets,
+restitution, catch rise speed, push depth, handle lag, per-move carry
+times, sway amplitudes; the ideal release time, the timing windows, entry
+angle, hop and backspin. Changes apply live and are not persisted — when
+something feels right, write it into Constants.
 
 ## Not here yet (on purpose)
 
-Shooting, layups, dunks, the park, weather and the scoreboard were removed to
-keep this stage about the handle; the earlier build is in git history
-(`bb515cf`). A spin move is deliberately absent: a first-person spin with no
-body is nauseating, and needs a camera treatment of its own.
+Layups, dunks, the park, weather and the scoreboard were removed to keep
+the early stages focused; the earlier build is in git history (`bb515cf`).
+A spin move is deliberately absent: a first-person spin with no body is
+nauseating, and needs a camera treatment of its own.
 
 ## Tech
 

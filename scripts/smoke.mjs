@@ -4,10 +4,13 @@
  * Boots the built game in Chromium (WebGL via SwiftShader), verifies it
  * reaches a ready state without console/page errors, then pumps the fixed-step
  * loop to exercise the real dribble engine: pickup, pound dribble, every move,
- * sprinting, dropping and re-gathering. It asserts the physical invariants the
- * feel depends on — the ball never dips under the court, its velocity is
- * continuous across catch/release, the hand is on the ball at every catch,
- * every move hands off to the intended hand and returns to a pound rhythm —
+ * sprinting, dropping and re-gathering, then shooting: a green release from
+ * the hold, a pull-up out of a moving dribble, and early / late releases. It
+ * asserts the physical invariants the feel depends on — the ball never dips
+ * under the court, its velocity is continuous across catch/release and
+ * through the whole jumper, the hand is on the ball at every catch and
+ * through the shot, every move hands off to the intended hand and returns to
+ * a pound rhythm, a green release swishes and off-timing lands in its zone —
  * and that nothing goes non-finite.
  *
  * Usage:
@@ -71,16 +74,16 @@ const result = await page.evaluate(() => {
         if (![p.x, p.y, p.z].every(Number.isFinite)) fails.push('ball position non-finite');
         const f = g.player.position;
         if (prevPos) {
-          // Ball displacement relative to the body, so running doesn't count.
-          const step = Math.hypot(p.x - prevPos.x - (f.x - prevFeet.x), p.y - prevPos.y, p.z - prevPos.z - (f.z - prevFeet.z));
+          // Ball displacement relative to the body, so running (or the shot's hop) doesn't count.
+          const step = Math.hypot(p.x - prevPos.x - (f.x - prevFeet.x), p.y - prevPos.y - (f.y - prevFeet.y), p.z - prevPos.z - (f.z - prevFeet.z));
           if (step > maxStep) { maxStep = step; window.__stepAt = { state: d.state, plan: d.plan?.name, t: d.t, phase: window.__phase, local: [d.ballLocal.x, d.ballLocal.y, d.ballLocal.z], prevLocal: window.__prevLocal, flight: d.flight && { t1: d.flight.t1, T: d.flight.T, A: d.flight.A.toArray(), B: d.flight.B.toArray(), vh: [d.flight.vh.x, d.flight.vh.y] } }; }
         }
         if (d.stats.maxHandGap > (window.__gapMax || 0)) { window.__gapMax = d.stats.maxHandGap; window.__gapAt = { state: d.state, plan: d.plan?.name, t: d.t, phase: window.__phase }; }
         if (p.y - R < minY + 1e-9 && p.y - R < 0) window.__minAt = { state: d.state, plan: d.plan?.name, t: d.t, phase: window.__phase };
         prevPos = { x: p.x, y: p.y, z: p.z };
         window.__prevLocal = [d.ballLocal.x, d.ballLocal.y, d.ballLocal.z];
-        prevFeet = { x: f.x, z: f.z };
-        if (d.dribbling) {
+        prevFeet = { x: f.x, y: f.y, z: f.z };
+        if (d.dribbling || d.shooting) {
           const v = d.ballVelLocal;
           const bounced = d.stats.bounces !== prevBounces;
           prevBounces = d.stats.bounces;
@@ -120,7 +123,7 @@ const result = await page.evaluate(() => {
     ['between', 'right', 1],
     ['behind', 'KeyQ', -1],
     ['inout', 'KeyF', -1],
-    ['hesitation', 'Space', -1],
+    ['hesitation', 'KeyR', -1],
     ['stepback', 'left', 1, ['KeyS']],
   ];
   const handoffs = [];
@@ -183,6 +186,74 @@ const result = await page.evaluate(() => {
   }
   check(d.hasBall, `did not re-gather the ball (state ${d.state})`);
 
+  // 8) Shooting. Hold Space, let go `release` seconds into the shot, then run
+  //    until the flight is decided. Continuity is measured by the same tick
+  //    monitor through gather, set, rise and flick.
+  const shoot = (release, keys = []) => {
+    g.input.pressed.add('Space');
+    tick(1, ['Space', ...keys]);
+    let guard = 0;
+    while (d.state !== 'loose' && guard++ < 400) {
+      const holding = d.shot && d.shot.t < release - 1e-6;
+      if (!holding && g.input.keys.has('Space')) { g.input.keys.delete('Space'); g.input.released.add('Space'); }
+      tick(1, holding ? ['Space', ...keys] : keys);
+    }
+    check(d.state === 'loose', `shot never released (state ${d.state})`);
+    for (let i = 0; i < 900 && d.tracker; i++) tick(1);
+    check(!d.tracker, 'shot never resolved');
+    return d.lastShot;
+  };
+  const faceHoop = (x, z) => {
+    g.player.teleport({ x, y: 0.02, z });
+    g.player.velocity.set(0, 0, 0);
+    g.cameraRig.yaw = Math.atan2(-(0 - x), -(12.425 - z));
+    g.cameraRig.pitch = 0.1;
+    g.cameraRig.applyLook(0, 0);
+    // A teleport is not ball motion: snap the handle frame to the new spot.
+    d._updateFrame(0, true);
+    prevPos = null; prevFeet = null; prevVel = null;
+  };
+  const shots = [];
+  window.__phase = 'shoot-green';
+  // a) From the hold at the top of the key: green → swish.
+  while (d.state !== 'hold' && d.state !== 'loose') { press('KeyE'); tick(1); tick(30); }
+  check(d.state === 'hold', `expected hold before shooting, got ${d.state}`);
+  faceHoop(0, 6.5);
+  tick(30);
+  let ls = shoot(0.62);
+  shots.push(`${ls?.zone}:${ls?.result}`);
+  check(ls?.zone === 'green' && ls?.result === 'swish', `green release should swish, got ${ls?.zone}:${ls?.result}`);
+  check(d.stats.maxReleaseJump < 0.5, `release velocity mismatch ${d.stats.maxReleaseJump.toFixed(2)} m/s`);
+
+  window.__phase = 'shoot-pullup';
+  // b) Pull-up out of a moving dribble, running in from the wing, still green.
+  faceHoop(6.0, 1.5);
+  g.ball.setControlled(); d.state = 'hold'; d.plan = null; d.flight = null; d.contact = null; d._ft = null; d.tracker = null;
+  d._updateFrame(0, true); d.ballLocal.set(0, 1.14, 0.40); d.ballVelLocal.set(0, 0, 0);
+  tick(20);
+  tick(1, [], 'left');
+  tick(150, ['KeyW']);
+  check(d.dribbling && g.player.planarSpeed > 2, `expected a moving dribble before the pull-up (${d.state}, ${g.player.planarSpeed.toFixed(1)} m/s)`);
+  const pullupDist = Math.hypot(g.player.position.x, g.player.position.z - 12.425);
+  check(pullupDist > 3.5, `pull-up too close to the rim (${pullupDist.toFixed(1)} m)`);
+  ls = shoot(0.62, ['KeyW']);
+  shots.push(`${ls?.zone}:${ls?.result}`);
+  check(ls?.zone === 'green' && (ls?.result === 'swish' || ls?.result === 'made'), `pull-up should go in, got ${ls?.zone}:${ls?.result}`);
+
+  // c) Off timing lands in its zone: late → glass, very early → airball, a touch late → back iron.
+  for (const [release, zone, phase] of [[0.73, 'glass', 'shoot-glass'], [0.40, 'air', 'shoot-air'], [0.67, 'iron', 'shoot-iron']]) {
+    window.__phase = phase;
+    faceHoop(-2.5, 7.5);
+    g.ball.setControlled(); d.state = 'hold'; d.plan = null; d.flight = null; d.contact = null; d._ft = null; d.tracker = null;
+    d._updateFrame(0, true); d.ballLocal.set(0, 1.14, 0.40); d.ballVelLocal.set(0, 0, 0);
+    tick(20);
+    ls = shoot(release);
+    shots.push(`${ls?.zone}:${ls?.result}`);
+    check(ls?.zone === zone && ls?.result === zone, `release at ${release}s should be ${zone}, got ${ls?.zone}:${ls?.result}`);
+  }
+  check(d.stats.maxReleaseJump < 0.5, `release velocity mismatch ${d.stats.maxReleaseJump.toFixed(2)} m/s`);
+  check(g.player.grounded && !g.player.lockMove, 'player still locked after the shot');
+
   // Invariants.
   check(minY > -0.01, `ball went under the court by ${(-minY).toFixed(3)} m`);
   check(maxJump < 3.0, `ball velocity discontinuity: ${maxJump.toFixed(2)} m/s in one tick`);
@@ -202,6 +273,8 @@ const result = await page.evaluate(() => {
     maxHandGap: d.stats.maxHandGap,
     handoffs,
     combo: labels,
+    shots,
+    maxReleaseJump: d.stats.maxReleaseJump,
     stepAt: window.__stepAt,
     jumpAt: window.__jumpAt,
     gapAt: window.__gapAt,

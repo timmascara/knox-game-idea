@@ -23,9 +23,12 @@ export class Game {
     this.handAsset = handAsset;
     this.paused = true;
     this.started = false;
-    this._cooldowns = { court: 0, rim: 0, backboard: 0 };
+    this._cooldowns = { court: 0, rim: 0, backboard: 0, net: 0 };
     this._accum = 0;
     this.fixedDt = 1 / 120;
+    // Rapier defaults to a 1/60 step; it must match the loop or free balls
+    // run at double speed.
+    this.physics.setTimestep(this.fixedDt);
 
     this._initRenderer();
     this.scene = new THREE.Scene();
@@ -77,6 +80,7 @@ export class Game {
       ball: this.ball,
       audio: this.audio,
       hud: this.hud,
+      hoops: this.world.hoops,
     });
     // The ball in your hands must never shove the body around.
     this.player.ignoreCollider = (c) => c.handle === this.ball.colliderHandle && this.ball.mode !== BallMode.FREE;
@@ -119,11 +123,12 @@ export class Game {
         const tag = this.physics.tagOf(other);
         if (!tag) return;
         const speed = this.ball.velocity.length();
+        this.dribble.onBallContact(tag, speed);
         if (this._cooldowns[tag] > 0) return;
         this._cooldowns[tag] = 0.08;
         if (tag === 'court') this.audio.bounce(clamp(speed * 0.14, 0.3, 1.4));
-        else if (tag === 'rim') this.audio.rim();
-        else if (tag === 'backboard') this.audio.backboard();
+        else if (tag === 'rim') this.audio.rim(clamp(speed * 0.16, 0.3, 1.3));
+        else if (tag === 'backboard') this.audio.backboard(clamp(speed * 0.16, 0.3, 1.3));
       },
     });
   }
@@ -137,7 +142,7 @@ export class Game {
     this.input.requestLock();
     this.menu.hide();
     this.hud.show();
-    this.hud.setHint('Walk into the ball to pick it up · E to grab');
+    this.hud.setHint('Walk into the ball to pick it up · E to grab · hold Space to shoot');
     // Hosts that refuse pointer lock (an embedded frame): play unlocked.
     setTimeout(() => {
       if (this.started && !this.input.locked && this.paused) {
@@ -227,6 +232,16 @@ export class Game {
     this.dribble.postStep();
 
     this.world.update(dt, this.player.position, this.ball.mesh.position);
+    // The net catches the ball a little on its way through, and sings.
+    const netContacts = this.world.netContacts || 0;
+    if (netContacts > 0) {
+      const speed = this.ball.velocity.length();
+      this.ball.applyNetDrag(dt, netContacts);
+      if (netContacts >= 5 && speed > 1.6 && this._cooldowns.net <= 0) {
+        this._cooldowns.net = 0.6;
+        this.audio.swish(clamp(speed * 0.18, 0.45, 1.25));
+      }
+    }
     this._footsteps(dt);
     this.hud.update(dt, this.dribble, this.player);
   }

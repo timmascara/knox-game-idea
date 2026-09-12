@@ -190,3 +190,31 @@ canvas { display: block; }
 .tuning-row span { opacity: 0.8; }
 .tuning-row input { width: 100%; accent-color: var(--accent); }
 .tuning-row b { text-align: right; font-weight: 600; opacity: 0.9; }
+
+/* ---- Shooting ---- */
+.shot-meter {
+  position: absolute; left: calc(50% + 34px); top: 50%;
+  transform: translateY(-50%);
+  opacity: 0; transition: opacity 0.14s ease;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,0.5));
+}
+.score {
+  position: absolute; top: 18px; left: 22px;
+  font-size: 14px; font-weight: 800; letter-spacing: 0.12em; opacity: 0.8;
+  text-shadow: 0 2px 6px rgba(0,0,0,0.6);
+}
+.timing {
+  position: absolute; left: calc(50% + 66px); top: 50%; transform: translateY(-50%);
+  font-size: 12px; font-weight: 800; letter-spacing: 0.14em; white-space: nowrap;
+  opacity: 0; transition: opacity 0.12s ease; text-shadow: 0 2px 6px rgba(0,0,0,0.7);
+}
+.timing.show { opacity: 0.95; }
+.timing.zone-green { color: var(--green); }
+.timing.zone-iron { color: var(--yellow); }
+.timing.zone-glass { color: var(--orange); }
+.timing.zone-air { color: var(--red); }
+.flash.result { top: 30%; font-size: 34px; }
+.flash.result-swish, .flash.result-made { color: var(--green); }
+.flash.result-iron { color: var(--yellow); }
+.flash.result-glass { color: var(--orange); }
+.flash.result-air { color: var(--red); }

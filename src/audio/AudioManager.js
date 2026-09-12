@@ -32,6 +32,7 @@ export class AudioManager {
       this.ambBus.connect(this.master);
 
       this._noiseBuffer = this._makeNoise(2.0);
+      this._whiteBuffer = this._makeWhite(2.0);
       this.ready = true;
     } catch (e) {
       this.enabled = false;
@@ -63,10 +64,21 @@ export class AudioManager {
     return buf;
   }
 
-  _noiseSource() {
+  _makeWhite(seconds) {
+    const len = Math.floor(this.ctx.sampleRate * seconds);
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    return buf;
+  }
+
+  _noiseSource(white = false) {
     const s = this.ctx.createBufferSource();
-    s.buffer = this._noiseBuffer;
+    s.buffer = white ? this._whiteBuffer : this._noiseBuffer;
     s.loop = true;
+    // Start somewhere random in the loop so back-to-back hits never phase.
+    s.loopStart = 0;
+    s._offset = Math.random() * 1.5;
     return s;
   }
 
@@ -120,48 +132,138 @@ export class AudioManager {
     n.stop(t + 0.08);
   }
 
-  rim() {
+  /**
+   * Ball on the iron: a bright inharmonic clang (steel ring, several
+   * partials that decay at different rates) over a short dull thud from the
+   * ball itself. Harder hits ring longer and brighter.
+   */
+  rim(intensity = 0.8) {
     if (!this.ready) return;
-    for (const f of [1180, 1760]) {
+    const v = clamp(intensity, 0.2, 1.4);
+    const partials = [
+      [1180, 0.11, 0.22],
+      [1760, 0.07, 0.3],
+      [2410, 0.05, 0.18],
+      [3260, 0.035, 0.12],
+      [640, 0.05, 0.14],
+    ];
+    for (const [f, g, decay] of partials) {
       const o = this.ctx.createOscillator();
-      o.type = 'triangle';
-      o.frequency.value = f * (0.98 + Math.random() * 0.04);
-      const { t } = this._env(o, this.sfxBus, 0.12, 0.002, 0.16);
+      o.type = f < 800 ? 'sine' : 'triangle';
+      o.frequency.value = f * (0.985 + Math.random() * 0.03);
+      const { t } = this._env(o, this.sfxBus, g * v * (f > 2000 ? Math.min(1, v) : 1), 0.0015, decay * (0.7 + 0.5 * v));
       o.start(t);
-      o.stop(t + 0.2);
+      o.stop(t + decay * 1.2 + 0.1);
     }
-  }
-
-  backboard() {
-    if (!this.ready) return;
+    // The ball's own thud on the metal.
     const o = this.ctx.createOscillator();
     o.type = 'sine';
-    o.frequency.value = 220;
-    const { t } = this._env(o, this.sfxBus, 0.3, 0.003, 0.13);
+    o.frequency.setValueAtTime(190, this.ctx.currentTime);
+    o.frequency.exponentialRampToValueAtTime(95, this.ctx.currentTime + 0.07);
+    const { t } = this._env(o, this.sfxBus, 0.22 * v, 0.002, 0.07);
     o.start(t);
-    o.stop(t + 0.2);
+    o.stop(t + 0.12);
+    const n = this._noiseSource(true);
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 2600;
+    bp.Q.value = 0.8;
+    n.connect(bp);
+    const { t: nt } = this._env(bp, this.sfxBus, 0.06 * v, 0.001, 0.03);
+    n.start(nt, n._offset);
+    n.stop(nt + 0.06);
+  }
+
+  /** Ball on the glass: a deep board thump with a short glassy ring. */
+  backboard(intensity = 0.8) {
+    if (!this.ready) return;
+    const v = clamp(intensity, 0.2, 1.4);
+    const o = this.ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(230, this.ctx.currentTime);
+    o.frequency.exponentialRampToValueAtTime(140, this.ctx.currentTime + 0.1);
+    const { t } = this._env(o, this.sfxBus, 0.34 * v, 0.003, 0.14);
+    o.start(t);
+    o.stop(t + 0.22);
+    const ring = this.ctx.createOscillator();
+    ring.type = 'sine';
+    ring.frequency.value = 1450 * (0.98 + Math.random() * 0.04);
+    const { t: rt } = this._env(ring, this.sfxBus, 0.05 * v, 0.002, 0.09);
+    ring.start(rt);
+    ring.stop(rt + 0.14);
     const n = this._noiseSource();
     const bp = this.ctx.createBiquadFilter();
     bp.type = 'lowpass';
     bp.frequency.value = 1600;
     n.connect(bp);
-    const { t: nt } = this._env(bp, this.sfxBus, 0.18, 0.002, 0.08);
-    n.start(nt);
+    const { t: nt } = this._env(bp, this.sfxBus, 0.2 * v, 0.002, 0.08);
+    n.start(nt, n._offset);
     n.stop(nt + 0.12);
   }
 
-  swish() {
+  /**
+   * The net. A swish is cords brushing the leather: a bright, breathy hiss
+   * that darkens as the ball pushes through, a lower whoosh as the net
+   * snaps down and back, and a few tiny cord snaps at the start. Intensity
+   * follows the ball's speed through the net.
+   */
+  swish(intensity = 1) {
     if (!this.ready) return;
-    const n = this._noiseSource();
+    const v = clamp(intensity, 0.3, 1.3);
+    const now = this.ctx.currentTime;
+    // Cord brush.
+    const n = this._noiseSource(true);
+    const hp = this.ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 1500;
     const bp = this.ctx.createBiquadFilter();
     bp.type = 'bandpass';
-    bp.frequency.setValueAtTime(4200, this.ctx.currentTime);
-    bp.frequency.exponentialRampToValueAtTime(1400, this.ctx.currentTime + 0.22);
+    bp.frequency.setValueAtTime(5600, now);
+    bp.frequency.exponentialRampToValueAtTime(1700, now + 0.3);
+    bp.Q.value = 0.65;
+    n.connect(hp).connect(bp);
+    const { t } = this._env(bp, this.sfxBus, 0.2 * v, 0.022, 0.3 * (0.8 + 0.4 * v));
+    n.start(t, n._offset);
+    n.stop(t + 0.6);
+    // Net body: the whoosh of the whole net dropping and whipping back.
+    const n2 = this._noiseSource();
+    const bp2 = this.ctx.createBiquadFilter();
+    bp2.type = 'bandpass';
+    bp2.frequency.setValueAtTime(1100, now + 0.04);
+    bp2.frequency.exponentialRampToValueAtTime(420, now + 0.4);
+    bp2.Q.value = 0.9;
+    n2.connect(bp2);
+    const { t: t2 } = this._env(bp2, this.sfxBus, 0.11 * v, 0.05, 0.38, 0.04);
+    n2.start(t2, n2._offset);
+    n2.stop(t2 + 0.6);
+    // Cord snaps.
+    const snaps = 3 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < snaps; i++) {
+      const when = 0.01 + Math.random() * 0.13;
+      const s = this._noiseSource(true);
+      const f = this.ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.frequency.value = 2600 + Math.random() * 2400;
+      f.Q.value = 2.5;
+      s.connect(f);
+      const { t: st } = this._env(f, this.sfxBus, 0.05 * v, 0.001, 0.012, when);
+      s.start(st, Math.random() * 1.5);
+      s.stop(st + 0.03);
+    }
+  }
+
+  /** The ball leaving the fingertips: a barely-there brush of leather. */
+  release() {
+    if (!this.ready) return;
+    const n = this._noiseSource(true);
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 2800;
     bp.Q.value = 1.2;
     n.connect(bp);
-    const { t } = this._env(bp, this.sfxBus, 0.16, 0.01, 0.26);
-    n.start(t);
-    n.stop(t + 0.4);
+    const { t } = this._env(bp, this.sfxBus, 0.035, 0.004, 0.035);
+    n.start(t, n._offset);
+    n.stop(t + 0.06);
   }
 
   footstep(intensity = 1) {

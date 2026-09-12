@@ -13,7 +13,13 @@ the next thing.
 - **Stage 1 — the handle. Done and verified in real play.** Open outdoor
   court, VR-style hands (no arms, no legs), a real basketball, and a dribble
   engine. Deployed, mouse capture confirmed working by the owner.
-- **Stage 2 — shooting. Not started.** See *Next stage* below.
+- **Stage 2 — shooting. Built and verified headless; not yet played by the
+  owner.** A 2K-style jumper with a timing meter, deterministic outcomes by
+  zone, a physics net and a synthesised swish. See *Shooting* below. Needs a
+  real-play pass on feel: meter speed, how the hands look through the
+  release, the sounds.
+- **Stage 3 — not chosen.** Layups/dunks under the rim are the obvious next
+  thing (see the close-range gap under *Shooting*).
 
 ## Leave the repo ready for the next session
 
@@ -40,13 +46,23 @@ npm install
 npm run dev                    # dev server
 npm run build && npm run preview   # production build on :4173
 npm run test:smoke             # headless test — run this before every push
-node scripts/capture.mjs all   # contact sheets of every move → screenshots/
+node scripts/capture.mjs all   # contact sheets of every move + the jumper → screenshots/
 node scripts/capture.mjs poses # the rigged hand in each pose, close up
+node scripts/capture.mjs shoot shothands flight net meter   # just the shooting captures
+ZONE=green node scripts/shots.mjs          # shot lab: fire a zone from many spots, report outcomes
+ZONE=iron ERRS=0.04,-0.04 SPOTS='[[0,6.5]]' PARAMS='{"ironDepth":0.05}' node scripts/shots.mjs
 ```
 
-`smoke.mjs` and `capture.mjs` both need `npm run preview` serving on :4173.
-There is no GPU here; both run headless Chromium with SwiftShader, and
-`capture.mjs` is how you review animation without being able to play it.
+`smoke.mjs`, `capture.mjs` and `shots.mjs` all need `npm run preview`
+serving on :4173. There is no GPU here; all run headless Chromium with
+SwiftShader, and `capture.mjs` is how you review animation without being
+able to play it. `shots.mjs` is how you tune an outcome: it releases at the
+requested timing errors from each spot and prints the zone the game graded,
+the physical result, rim/board hit counts and the release continuity, and
+`PARAMS` writes into the live `SHOT` constants so an aim offset can be swept
+without rebuilding. Note its timing is quantised to the 120 Hz tick, so a
+requested error right at a zone boundary can grade as the neighbour — read
+the `zone` column, not the `err` you asked for.
 
 ## Invariants — the smoke test enforces these
 
@@ -55,10 +71,18 @@ A change that breaks one of these is wrong even if it looks fine:
 1. The ball never dips below the court surface.
 2. Ball velocity is continuous across every catch and release (no snapping).
    Measured in the handle frame so running does not count as a discontinuity.
-3. The carrying palm stays within ~2 cm of the ball surface while carrying.
+   This includes the whole jumper: gather → set → rise → flick, and the
+   launch itself (`stats.maxReleaseJump`, the gap between what the hand was
+   doing at the release instant and the velocity the ball was given, must
+   stay under 0.5 m/s; it is ~0.15).
+3. The carrying palm stays within ~2 cm of the ball surface while carrying,
+   and the shooting palm through the shot.
 4. Every move hands off to the intended hand and returns to a pound rhythm.
 5. Buffered moves chain; drop and re-gather works.
-6. Nothing goes non-finite.
+6. A green release swishes (from the hold and from a moving pull-up); a
+   late release goes off the glass, a slightly late one catches back iron, a
+   very early one airballs. Deterministic — no randomness anywhere in the shot.
+7. Nothing goes non-finite.
 
 ## The dribble engine — concepts you need before editing it
 
@@ -91,6 +115,87 @@ drags them. The carrying palm tracks the ball exactly; the free hand follows
 it down then rises ahead to meet it; a hand receiving a crossover moves early
 to hover over the arrival point rather than chasing.
 
+## Shooting — how it works
+
+Read `src/ball/Shot.js` (pure maths) and the SHOOTING section of
+`DribbleController` (the states) before touching it. Every feel number is
+in `SHOT` in `Constants.js`; the Tab panel has a SHOT TUNING section.
+
+**Input.** Hold Space to start the jumper (from the hold or straight out of a
+live dribble, whichever hand), release Space to let go. Hesitation moved to
+R to free Space. A tap releases immediately (an airball, as in 2K). Movement
+locks for the duration; the body squares up to the basket on its own while
+the head stays free (the handle frame's yaw is driven by the hoop direction
+during a shot, not the camera).
+
+**The timeline is fixed** (`SHOT.releaseTime` = 0.62 s is the green centre,
+the meter fills to `meterTime` = 0.84 s and auto-releases there). The whole
+jumper is one `Contact` path in the handle frame: current ball state →
+set point beside the right eye → load point above the forehead → release
+point = load + `extension` along the launch direction, whose end velocity
+*is* the world launch velocity that swishes (minus the body's velocity, so a
+pull-up compensates for momentum). The extension is a constant-acceleration
+segment so its duration follows from its length and the launch speed. The
+hop (`jumpSpeed`) is timed so its apex lands on the ideal release. Beyond
+the ideal point the ball travels `overhold` further and stalls in the hand.
+
+**Button-up → zone → flick → launch.** The timing error grades into a zone
+(`zoneFor`: green ≤ 0.03 s, iron ≤ 0.075, glass ≤ 0.135, else air). The
+ball is wherever it is on the path; a short "flick" `Contact` replans from
+that position and velocity to the launch velocity that zone's aim point
+needs (`aimFor`), so a bad release is still a continuous hand motion. At
+the flick's end the launch is re-solved from the ball's actual world
+position and the ball goes free with backspin. If the flick ends part-way
+through a tick, both position *and* velocity are advanced by the remainder
+— forgetting the velocity gave the ball a phantom +g·dt upward kick that
+cost an afternoon and only showed up as "green shots 8 cm long".
+
+**The arc solver** (`solveLaunch`) is closed-form and includes Rapier's
+linear damping; it lands within ~5 mm at the rim. Arcs are defined by the
+entry angle at the rim (47°), not an apex, which keeps the shape the same
+from every distance. Close to the basket a fixed entry angle cannot clear
+the front iron, so `entryFor` swaps to a minimum-apex rule (`minApexSwish`,
+`minApexIron`).
+
+**Outcomes are aim points, physics does the rest.** Swish: rim centre + 2 cm.
+Back iron: the ball's centre crosses the rim plane `ironDepth` past the back
+tube, so it meets the top of the back iron and pops out long. Glass: the
+board `glassHeight` above the rim, `glassSide` across on the *far* side from
+the shooter (the near side too often banks in), early releases a touch
+lower. Airball: `airShort` short of the front rim and `airDrop` below it,
+flat when early, floaty when late. `scripts/shots.mjs` verified these from
+16+ spots across the court (deep threes, corners, the far hoop) at the
+edges of every zone: green 100%, glass 100%, air 100%, iron ~97%.
+
+**Known gap: inside ~0.8 m of the rim** a slightly-off release can hit the
+back iron and still fall in, and from directly under the rim nothing is
+guaranteed. That is layup territory; a jumper from there is the wrong
+animation anyway.
+
+**After release** `ShotTracker` (in `Shot.js`) watches the ball: rim / board
+/ court contacts come from the physics contact events via
+`DribbleController.onBallContact`, and the make detector is the two-stage
+one from the old game (pending on descending through the rim plane inside
+the hoop, confirmed clearly below, cancelled if it pops back up). Its miss
+rule must never fire before the apex — an early release starts below the
+rim. Results: swish, made, iron, glass, air. The HUD flashes the timing
+("SLIGHTLY LATE") on button-up and the result when it is decided.
+
+**The net** (`Net.js`) is a verlet cloth rendered as instanced cord
+cylinders and knots (no more 1 px lines): 12 loops, diamond weave, hanging
+loops on the rim, full 3D sphere push-out so a ball pushes the cords apart
+and drags the net down, then it whips back and swings. The number of nodes
+the ball touches becomes drag on the ball (`Basketball.applyNetDrag`) — a
+real net slows the ball and that is much of why a swish reads as a swish —
+and drives the swish sound from `Game._update` (physical: any ball through
+the net sounds, a rattled make included).
+
+**Audio** is still fully synthesised. The swish is white noise through a
+sweeping bandpass (cord brush) over a lower whoosh (the net body) with a few
+cord snaps; rim is an inharmonic partial set over a thud, velocity-scaled;
+glass is a board thump with a short ring. None of it has been heard by a
+human yet — the sandbox has no audio — so treat the mix as a first draft.
+
 ## The hands
 
 `src/assets/hand_right.glb` is a **third-party sculpt supplied by the owner**
@@ -118,9 +223,23 @@ straightens.
   not persisted.
 - Fixed 120 Hz simulation step (`Game.fixedDt`) so timing is identical at any
   frame rate. Edge-triggered input applies only to the first sub-step.
+  **The Rapier world's timestep is set to match** (`Physics.setTimestep`).
+  It defaulted to 1/60 while being stepped 120×/s, so every free ball used
+  to run at double speed; the dribble never noticed because it is the
+  controller's own maths. Do not remove that call.
 - `Game._update(dt)` is public so tests can pump the loop deterministically.
-- `window.__game`, `window.__THREE`, `window.__POSES` are exposed for the
-  capture and smoke harnesses.
+- `window.__game`, `window.__THREE`, `window.__POSES`, `window.__CONST`
+  (`{ SHOT, DRIBBLE }`, live) are exposed for the capture, smoke and shot-lab
+  harnesses.
+- **Rapier integrates positions exactly** (velocity-Verlet-like, so
+  x = x₀ + v₀t + ½at² with no ½·a·dt·t drift); a continuous-time solver
+  matches it. Do not add a "symplectic correction" — that was tried and it
+  made things worse.
+- **Hoop geometry:** the glass is `rimRadius + 0.15` behind the rim centre
+  (regulation). It used to be 0.15 from the *centre*, which put the back of
+  the rim inside the board and made centred shots brush the glass on the way
+  down. The rim collider is now 40 overlapping spheres so the iron feels
+  like a smooth ring.
 
 ## Hosting and the pointer-lock situation
 
@@ -165,29 +284,22 @@ at `bb515cf`, kept only as reference for the shooting stage. If you open a
 session and the code looks like a park with grass, trees and a shot meter,
 you are on the wrong branch.
 
-## Next stage: shooting
+## Next: play it, then decide stage 3
 
-Nothing is built yet. What is already in place to build on:
+The shooting stage has only been verified headless. The first thing the
+next session should do is get the owner's read on real play:
 
-- `solveArc()` in `src/core/MathUtils.js` — ballistic launch solver, currently
-  unused, kept for this.
-- `src/world/Hoop.js` — regulation rim built as a ring of sphere colliders so
-  the ball can drop through and rattle, plus backboard and pole colliders.
-- `src/world/Net.js` — verlet net that swishes when the ball passes.
-- `DribbleController` owns possession. Shooting is a **new state alongside
-  `CONTACT`/`FLIGHT`**, entered from `HOLD` or from a gather out of a dribble.
+- Meter speed and the size of the green window (`SHOT.green`, 0.03 s).
+- Whether the hands read well through the release from the eyes — the mesh
+  has no forearm, so the wrist cut is visible at the follow-through.
+- The sounds: nobody has heard the swish / rim / glass synths yet.
+- Whether the shot should also be triggerable by mouse.
 
-Reference, do not paste back: commit `bb515cf` has a complete older shooting
-system in `src/ball/Shot.js` and `src/ball/BallController.js` — timing-based
-gather → set → release graded green/yellow/orange/red, layups, dunks, and a
-two-stage make detector (pending when the ball descends through the rim plane
-inside the hoop, confirmed once clearly below, cancelled if it pops back up).
-That make detector is sound and worth reusing conceptually. The rest was built
-on the old dribble model and will not fit the current one.
-
-**The hard part** is the gather: dribble → two hands → up into the shot must
-be continuous in position and velocity like every other transition. That is
-the invariant most likely to be broken by a naive port.
+Candidates for stage 3: layups and dunks (the close-range gap above), or a
+rebound/chase loop so a miss is not a dead end. `solveArc()` in
+`MathUtils.js` is still unused and available. Reference commit `bb515cf`
+still has the old layup/dunk code (built on the old dribble model; do not
+paste it back).
 
 ## Decisions already made — do not silently reverse
 
@@ -201,3 +313,14 @@ the invariant most likely to be broken by a naive port.
 - **The ball's texture is generated per texel from real seam geometry** (an
   equator, a meridian, two side circles at 55°), not drawn by eye.
 - Cadence emerges from the bounce physics. Do not add a "bounce speed" knob.
+- **Shot outcomes are deterministic by timing zone.** No randomness in the
+  aim: a green is always a swish, iron is always back iron and out, and so
+  on, exactly as the owner specified. Do not add "realistic" random misses.
+- **Space is the shot button; hesitation moved to R.** The jump shot is a
+  hold-and-release, and Space reads as "jump".
+- **Always right-handed.** The shot gathers into the right hand whichever
+  hand was dribbling.
+- **The body squares up to the basket during a shot** while the head stays
+  free. Turning the camera for the player would be nauseating; letting the
+  ball follow a turned head would make every shot miss.
+- **The shot arc keeps a fixed entry angle (47°), not a fixed apex.**

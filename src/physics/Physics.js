@@ -20,6 +20,14 @@ export class Physics {
     this._tags = new Map(); // collider handle -> string tag
   }
 
+  /**
+   * Rapier's world defaults to a 1/60 s step. The game steps it at its own
+   * fixed rate, so the two must agree or every free ball runs fast.
+   */
+  setTimestep(dt) {
+    this.world.timestep = dt;
+  }
+
   /** Associate a semantic tag with a collider handle (for collision audio). */
   tagCollider(collider, tag) {
     if (collider) this._tags.set(collider.handle, tag);

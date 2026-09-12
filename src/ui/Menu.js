@@ -30,11 +30,12 @@ export class Menu {
             <div><b>WASD</b> move · <b>Shift</b> sprint (speed dribble)</div>
             <div><b>Mouse</b> look</div>
             <div><b>E</b> pick up · hold / dribble</div>
+            <div><b>Space</b> hold to shoot · let go in the green</div>
             <div><b>L-Click</b> crossover · with <b>S</b>: step-back</div>
             <div><b>R-Click</b> between the legs</div>
             <div><b>Q</b> behind the back</div>
             <div><b>F</b> in &amp; out</div>
-            <div><b>Space</b> hesitation</div>
+            <div><b>R</b> hesitation</div>
             <div><b>C</b> (hold) low dribble</div>
             <div><b>G</b> drop the ball</div>
             <div><b>Tab</b> tuning panel · <b>Esc</b> pause</div>
@@ -133,7 +134,7 @@ export class Menu {
     this.started = false;
     this.overlay.classList.remove('hidden');
     this._showSettings(false);
-    this.$('#menu-sub').textContent = 'Dribble lab. Master the handle first.';
+    this.$('#menu-sub').textContent = 'Handle it. Then knock it down.';
     this.$('#btn-play').textContent = 'Step on the court';
   }
 

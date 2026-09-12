@@ -1,7 +1,11 @@
+import { ShotMeter } from './ShotMeter.js';
+import { SHOT } from '../core/Constants.js';
+
 /**
- * Minimal heads-up display for the dribble lab: a crosshair, which hand has
- * the ball, the move that just fired (and the chain it belongs to), a live
- * tempo readout, and a contextual hint. Pure DOM over the canvas.
+ * Minimal heads-up display: a crosshair, which hand has the ball, the move
+ * that just fired (and the chain it belongs to), a live tempo readout, the
+ * shot meter with its timing and result feedback, a makes tally, and a
+ * contextual hint. Pure DOM over the canvas.
  */
 export class HUD {
   constructor() {
@@ -14,7 +18,10 @@ export class HUD {
         <span class="hand" id="hud-right">R</span>
       </div>
       <div class="tempo" id="hud-tempo"></div>
+      <div class="score" id="hud-score"></div>
       <div class="flash move" id="hud-move"></div>
+      <div class="flash result" id="hud-result"></div>
+      <div class="timing" id="hud-timing"></div>
       <div class="combo" id="hud-combo"></div>
       <div class="hint" id="hud-hint"></div>
     `;
@@ -23,10 +30,14 @@ export class HUD {
       left: this.root.querySelector('#hud-left'),
       right: this.root.querySelector('#hud-right'),
       tempo: this.root.querySelector('#hud-tempo'),
+      score: this.root.querySelector('#hud-score'),
       move: this.root.querySelector('#hud-move'),
+      result: this.root.querySelector('#hud-result'),
+      timing: this.root.querySelector('#hud-timing'),
       combo: this.root.querySelector('#hud-combo'),
       hint: this.root.querySelector('#hud-hint'),
     };
+    this.meter = new ShotMeter(this.root);
     this._lastCatch = 0;
     this._catchTimes = [];
     this._clock = 0;
@@ -58,8 +69,40 @@ export class HUD {
     this.el.combo.textContent = list.length > 1 ? list.join('  →  ') : '';
   }
 
+  /** Timing feedback the instant the button comes up, before the ball lands. */
+  flashTiming(zone, err) {
+    const e = this.el.timing;
+    let text;
+    if (zone === 'green') text = 'PERFECT';
+    else {
+      const side = err < 0 ? 'EARLY' : 'LATE';
+      const mag = Math.abs(err);
+      text = mag <= SHOT.iron ? `SLIGHTLY ${side}` : mag <= SHOT.glass ? side : `WAY ${side}`;
+    }
+    e.textContent = text;
+    e.className = `timing show zone-${zone}`;
+    clearTimeout(this._timingTo);
+    this._timingTo = setTimeout(() => e.classList.remove('show'), 1100);
+  }
+
+  /** The verdict once the ball has settled the question. */
+  flashResult(label, kind) {
+    const e = this.el.result;
+    e.textContent = label;
+    e.className = `flash result result-${kind}`;
+    void e.offsetWidth;
+    e.classList.add('show');
+    clearTimeout(this._resultTo);
+    this._resultTo = setTimeout(() => e.classList.remove('show'), 1000);
+  }
+
+  setScore(made, attempts) {
+    this.el.score.textContent = attempts ? `${made} / ${attempts}` : '';
+  }
+
   update(dt, dribble, player) {
     this._clock += dt;
+    this.meter.update(dt);
     if (dribble.lastEvent === 'catch') {
       dribble.lastEvent = null;
       this._catchTimes.push(this._clock);

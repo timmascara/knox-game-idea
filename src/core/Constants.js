@@ -117,6 +117,47 @@ export const DRIBBLE = {
   swayRoll: 0.035,
 };
 
+// ---------------------------------------------------------------------------
+// Shooting. The jumper is a fixed timeline (2K style): the meter starts when
+// the shot is triggered and the release quality is how close the button-up
+// lands to `releaseTime`. Outcome zones are deterministic — a green release
+// always swishes, a slightly-off one always catches back iron, and so on.
+// ---------------------------------------------------------------------------
+export const SHOT = {
+  // Timeline, seconds from the trigger.
+  setTime: 0.24, // the ball reaches the set point (beside the eyes)
+  releaseTime: 0.62, // the ideal release — centre of the green window
+  meterTime: 0.84, // the meter is full; still holding here releases late
+  overhold: 0.12, // after the ideal point the ball travels this long before it stalls in the hand
+  jumpSpeed: 3.4, // the shot hop, timed so its apex lands on releaseTime
+  // Timing windows, |error| in seconds from the ideal release.
+  green: 0.03, // swish
+  iron: 0.075, // back iron and out
+  glass: 0.135, // off the backboard and out; beyond this is an airball
+  // Arc.
+  entryAngle: 47, // degrees below horizontal as the ball reaches the rim
+  minApexSwish: 0.45, // close in, a swish must still peak this far above the rim
+  minApexIron: 0.24, // ...and a back-iron miss comes in flat, peaking only this high
+  entryAngleEarly: 36, // a flat, short airball
+  entryAngleLate: 58, // a high, short airball
+  backspin: 14, // rad/s
+  // Where the ball goes, handle frame metres (x right, y up from the feet,
+  // z forward). Right-handed shooter: the ball sets beside the right eye.
+  setPoint: [0.16, 1.58, 0.36],
+  loadPoint: [0.14, 1.78, 0.30],
+  extension: 0.50, // the arm extends this far along the launch direction
+  flickLength: 0.30, // the wrist snap that carries the release
+  loadSpeed: 1.2, // ball speed leaving the load point (m/s)
+  followThrough: 0.55, // seconds the shooting hand holds the gooseneck
+  // Aim offsets by outcome, metres (see Shot.js aimFor).
+  swishDepth: 0.02,
+  ironDepth: 0.03, // ball centre passes this far beyond the back rim tube
+  glassHeight: 0.62, // backboard hit this far above the rim plane
+  glassSide: 0.27, // and this far across, to the far side from the shooter
+  airShort: 0.45, // airballs fall this far short of the front rim
+  airDrop: 0.18, // and this far below rim height
+};
+
 // Rapier interaction groups: 16-bit membership | 16-bit filter.
 export const GROUP = {
   WORLD: 0x0001,

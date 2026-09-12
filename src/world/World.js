@@ -108,6 +108,7 @@ export class World {
     this.sun.position.copy(playerPos).add(this.sunOffset);
     this.sun.target.position.set(playerPos.x, 0, playerPos.z);
     this.sun.target.updateMatrixWorld();
-    for (const hoop of this.hoops) hoop.update(dt, ballPos, 0.121);
+    this.netContacts = 0;
+    for (const hoop of this.hoops) this.netContacts = Math.max(this.netContacts, hoop.update(dt, ballPos, 0.121));
   }
 }

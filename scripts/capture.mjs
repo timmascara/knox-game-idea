@@ -8,7 +8,7 @@
  *   node scripts/capture.mjs [scenario...]
  *
  * Scenarios: hero, hold, handclose, ball, ballclose, pound, crossover, between, behind, inout, hesitation,
- * stepback, speed, low, all (default: hold pound).
+ * stepback, speed, low, shoot, shothands, flight, net, meter, all (default: hold pound).
  */
 import { chromium } from 'playwright-core';
 import { mkdirSync } from 'node:fs';
@@ -93,6 +93,22 @@ await page.evaluate(() => {
       g.hands.snapToTargets();
     },
     dribble(sign = 1) { this.hold(); d_start(sign); },
+    // Stand at (x, z) facing the near hoop, ball in the hands.
+    faceHoop(x, z, pitch = 0.12) {
+      const g = window.__game; const d = g.dribble;
+      g.player.teleport({ x, y: 0.02, z }); g.player.velocity.set(0, 0, 0);
+      g.cameraRig.yaw = Math.atan2(-(0 - x), -(12.425 - z)); g.cameraRig.pitch = pitch; g.cameraRig.applyLook(0, 0);
+      d._ft = null; d.shot = null; d.tracker = null; d._shooting = false; g.player.lockMove = false;
+      d._updateFrame(0, true); g.ball.setControlled(); d.state = 'hold'; d.t = 0; d.plan = null; d.flight = null; d.contact = null;
+      d.ballLocal.set(0, 1.14, 0.40); d.ballVelLocal.set(0, 0, 0); this.tick(30); g.hands.snapToTargets();
+    },
+    // Start a jumper; tick with Space held until `release` seconds in, then let go.
+    shootTo(release) {
+      const g = window.__game; const d = g.dribble;
+      g.input.pressed.add('Space'); g.input.keys.add('Space'); g._update(1 / 120); g.input.endFrame();
+      while (d.shot && d.shot.t < release - 1e-6) { g.input.keys.add('Space'); g._update(1 / 120); g.input.endFrame(); }
+      g.input.keys.delete('Space'); g.input.released.add('Space');
+    },
   };
   function d_start(sign) { window.__game.dribble._startDribble(sign); }
 });
@@ -193,6 +209,87 @@ const scenarios = {
     console.log('wrote', `${OUT}/pound-sheet.png`);
     await page.evaluate(() => window.__h.sheetEnd());
   },
+  /** The jumper from the player's eyes: gather → set → rise → release → follow-through, 30 ms apart. */
+  async shoot() {
+    await page.evaluate(() => { const h = window.__h; h.faceHoop(0, 6.5, 0.16); h.sheetBegin(5, 5); h.shootTo(0.62); });
+    // shootTo returns at the release tick; rewind the sheet through the whole shot deterministically.
+    await page.evaluate(() => { const h = window.__h; h.faceHoop(0, 6.5, 0.16); h.sheetBegin(5, 5);
+      const g = window.__game; const d = g.dribble;
+      g.input.pressed.add('Space'); g.input.keys.add('Space'); g._update(1 / 120); g.input.endFrame(); h.sheetAdd();
+      for (let i = 1; i < 25; i++) {
+        for (let k = 0; k < 4; k++) {
+          const hold = d.shot && d.shot.t < 0.62 - 1e-6;
+          if (hold) g.input.keys.add('Space'); else if (g.input.keys.has('Space')) { g.input.keys.delete('Space'); g.input.released.add('Space'); }
+          g._update(1 / 120); g.input.endFrame();
+        }
+        h.sheetAdd();
+      }
+    });
+    await page.locator('#sheet').screenshot({ path: `${OUT}/shoot-sheet.png` });
+    console.log('wrote', `${OUT}/shoot-sheet.png`);
+    await page.evaluate(() => window.__h.sheetEnd());
+  },
+  /** The hands on the ball at the set and at the release, from the side and from above. */
+  async shothands() {
+    for (const [label, at] of [['set', 0.30], ['load', 0.50], ['release', 0.60], ['flick', 0.64]]) {
+      await page.evaluate(({ at }) => {
+        const h = window.__h; h.faceHoop(0, 6.5, 0.16);
+        const g = window.__game; const d = g.dribble;
+        g.input.pressed.add('Space'); g.input.keys.add('Space'); g._update(1 / 120); g.input.endFrame();
+        while (d.shot && d.shot.t < at - 1e-6) { if (d.shot.t < 0.62) g.input.keys.add('Space'); else { g.input.keys.delete('Space'); g.input.released.add('Space'); } g._update(1 / 120); g.input.endFrame(); }
+        const b = g.ball.mesh.position;
+        h.closeup({ x: b.x + 0.75, y: b.y + 0.05, z: b.z + 0.25 }, { x: b.x, y: b.y - 0.05, z: b.z }, 40);
+      }, { at });
+      await shot(`shot-${label}-side`);
+      await page.evaluate(() => { const g = window.__game; const b = g.ball.mesh.position; window.__h.closeup({ x: b.x - 0.05, y: b.y + 0.15, z: b.z - 0.7 }, { x: b.x, y: b.y - 0.1, z: b.z + 0.1 }, 45); });
+      await shot(`shot-${label}-front`);
+    }
+    // Follow-through, 0.2 s after the launch, from the player's eyes and from the side.
+    await page.evaluate(() => { const h = window.__h; h.faceHoop(0, 6.5, 0.16); h.shootTo(0.62); const g = window.__game; h.freecam(); while (g.dribble.state !== 'loose') h.tick(1); h.tick(24); });
+    await shot('shot-followthrough');
+    await page.evaluate(() => { const g = window.__game; const w = g.hands.right.pos; window.__h.closeup({ x: w.x + 0.7, y: w.y + 0.1, z: w.z + 0.2 }, { x: w.x, y: w.y, z: w.z - 0.1 }, 40); });
+    await shot('shot-followthrough-side');
+    await page.evaluate(() => window.__h.freecam());
+  },
+  /** The arc from the player's eyes, 100 ms apart, through the swish. */
+  async flight() {
+    await page.evaluate(() => { const h = window.__h; h.faceHoop(0, 6.5, 0.24); h.shootTo(0.62); const g = window.__game; while (g.dribble.state !== 'loose') h.tick(1); });
+    await page.evaluate(() => { const h = window.__h; h.sheetBegin(5, 4); for (let i = 0; i < 20; i++) { h.tick(12); h.sheetAdd(); } });
+    await page.locator('#sheet').screenshot({ path: `${OUT}/flight-sheet.png` });
+    console.log('wrote', `${OUT}/flight-sheet.png`);
+    await page.evaluate(() => window.__h.sheetEnd());
+  },
+  /** The net taking a swish, from beside the rim, 40 ms apart. */
+  async net() {
+    await page.evaluate(() => {
+      const h = window.__h; h.faceHoop(0, 7.5, 0.2); h.shootTo(0.62);
+      const g = window.__game; while (g.dribble.state !== 'loose') h.tick(1);
+      h.closeup({ x: 1.3, y: 3.0, z: 11.4 }, { x: 0, y: 2.9, z: 12.425 }, 38);
+      // run until the ball is just above the rim
+      let guard = 0; while (guard++ < 400 && !(g.ball.position.y < 3.45 && g.ball.velocity.y < 0)) h.tick(1);
+      h.sheetBegin(5, 4, 426, 240); for (let i = 0; i < 20; i++) { h.tick(5); h.sheetAdd(); }
+    });
+    await page.locator('#sheet').screenshot({ path: `${OUT}/net-sheet.png` });
+    console.log('wrote', `${OUT}/net-sheet.png`);
+    await page.evaluate(() => window.__h.sheetEnd());
+    await page.evaluate(() => { const h = window.__h; h.closeup({ x: 0.9, y: 2.75, z: 11.6 }, { x: 0, y: 2.85, z: 12.425 }, 34); });
+    await shot('net-close');
+    await page.evaluate(() => window.__h.freecam());
+  },
+  /** The HUD meter mid-fill and at a green / late result. */
+  async meter() {
+    await page.evaluate(() => { const h = window.__h; h.faceHoop(0, 6.5, 0.16); const g = window.__game; g.input.pressed.add('Space'); g.input.keys.add('Space'); g._update(1 / 120); g.input.endFrame(); while (g.dribble.shot.t < 0.45) { g.input.keys.add('Space'); g._update(1 / 120); g.input.endFrame(); } h.render(); });
+    await page.screenshot({ path: `${OUT}/meter-fill.png` });
+    console.log('wrote', `${OUT}/meter-fill.png`);
+    await page.evaluate(() => { const h = window.__h; h.faceHoop(0, 6.5, 0.16); h.shootTo(0.62); h.tick(3); h.render(); });
+    await page.screenshot({ path: `${OUT}/meter-green.png` });
+    await page.evaluate(() => { const h = window.__h; h.faceHoop(0, 6.5, 0.16); h.shootTo(0.74); h.tick(3); h.render(); });
+    await page.screenshot({ path: `${OUT}/meter-late.png` });
+    // result text: run out the green shot until the tracker resolves
+    await page.evaluate(() => { const h = window.__h; h.faceHoop(0, 6.5, 0.16); h.shootTo(0.62); const g = window.__game; let n = 0; while (n++ < 900 && (g.dribble.state !== 'loose' || g.dribble.tracker)) h.tick(1); h.tick(6); h.render(); });
+    await page.screenshot({ path: `${OUT}/meter-result.png` });
+    console.log('wrote', `${OUT}/meter-*.png`);
+  },
   async move(name, key, extra = {}) {
     await page.evaluate(({ key, extra }) => {
       const h = window.__h;
@@ -218,17 +315,18 @@ const scenarios = {
 };
 
 for (const name of wanted) {
-  const list = name === 'all' ? ['hold', 'ball', 'pound', 'crossover', 'between', 'behind', 'inout', 'hesitation', 'stepback', 'speed', 'low'] : [name];
+  const list = name === 'all' ? ['hold', 'ball', 'pound', 'crossover', 'between', 'behind', 'inout', 'hesitation', 'stepback', 'speed', 'low', 'shoot', 'shothands', 'flight', 'net', 'meter'] : [name];
   for (const s of list) {
     if (scenarios[s]) await scenarios[s]();
     else if (s === 'crossover') await scenarios.move('crossover', 'left');
     else if (s === 'between') await scenarios.move('between', 'right');
     else if (s === 'behind') await scenarios.move('behind', 'KeyQ');
     else if (s === 'inout') await scenarios.move('inout', 'KeyF');
-    else if (s === 'hesitation') await scenarios.move('hesitation', 'Space');
+    else if (s === 'hesitation') await scenarios.move('hesitation', 'KeyR');
     else if (s === 'stepback') await scenarios.move('stepback', 'left', { back: true });
     else if (s === 'speed') await scenarios.move('speed', 'KeyX', { sprint: true });
     else if (s === 'low') await scenarios.move('low', 'KeyX', { low: true });
+    else console.log('unknown scenario', s);
   }
 }
 

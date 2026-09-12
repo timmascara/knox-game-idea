@@ -35,6 +35,11 @@ export const HAND_POSES = {
   // A firmer grip for holding / gathering the ball in two hands.
   grip: { curl: [0.12, 0.16, 0.2, 0.24], spread: 0.8, thumbCurl: 0.25, thumbOut: 0.8 },
   guard: { curl: [-0.05, 0.0, 0.04, 0.08], spread: 0.3, thumbCurl: 0.15, thumbOut: 0.5 },
+  // Shooting hand under the ball: fingers spread wide and straight, the ball
+  // resting on the pads, thumb out for balance.
+  shoot: { curl: [-0.08, -0.06, -0.02, 0.04], spread: 1.0, thumbCurl: 0.0, thumbOut: 0.9 },
+  // The gooseneck after release: wrist snapped, fingers hanging down.
+  followThrough: { curl: [0.42, 0.46, 0.5, 0.52], spread: 0.25, thumbCurl: 0.3, thumbOut: 0.4 },
 };
 
 const _e = new THREE.Euler();
