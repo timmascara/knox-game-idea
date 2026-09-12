@@ -191,13 +191,23 @@ scripts/        smoke.mjs (headless test) · capture.mjs (contact sheets of any 
 ## Build & test
 
 ```bash
-npm run build          # production bundle to dist/
-npm run preview        # serve the build on http://127.0.0.1:4173
-npm run test:smoke     # headless Chromium: boots, dribbles, checks invariants
-node scripts/capture.mjs all   # contact sheets of every move and the shot → screenshots/
-node scripts/capture.mjs poses # the rigged hand in every pose, close up
-ZONE=green node scripts/shots.mjs   # shot lab: fire a timing zone from many spots, report what happened
+npm run build
+npm run preview
+npm run test:smoke
+node scripts/capture.mjs all
+node scripts/capture.mjs poses
+ZONE=green node scripts/shots.mjs
 ```
+
+In order: build the production bundle to `dist/`; serve that build on
+http://127.0.0.1:4173; run the headless test (boots, dribbles, shoots,
+checks the invariants); write contact sheets of every move and the shot to
+`screenshots/`; the same for the rigged hand in every pose; and the shot
+lab, which fires one timing zone from many spots and reports what happened.
+The last three need `npm run preview` already serving.
+
+(The blocks here are deliberately free of `#` comments: macOS zsh passes
+them to the command as arguments instead of ignoring them.)
 
 To re-rig the hand from the source sculpt (e.g. after tweaking joint
 placement): `python3 scripts/rig_hand.py <hand.obj> src/assets/hand_right.glb`

@@ -30,19 +30,40 @@ you finish **any** piece of work, however small:
 
 0. **Hand the owner a local run terminal with every update, and never merge
    to `main` without their go-ahead.** They test locally first; `main` is
-   what publishes. End the message with the exact copy-paste block, with
-   this session's branch name filled in:
+   what publishes. A standing instruction from the owner, not a nicety.
+
+   **Never put a `#` comment in a block the owner will paste.** They are on
+   macOS, whose zsh does *not* strip `#` comments at an interactive prompt
+   (`INTERACTIVE_COMMENTS` is off by default). A line like
+   `git clone <url>   # first time only` sends git five arguments and fails
+   with "Too many arguments", and then every following line fails too
+   because the clone never happened. This actually happened; it cost the
+   owner a round trip. Put the explanation in prose outside the block, and
+   keep the block pure commands, one per line — no `#` anywhere, not even
+   on its own line.
+
+   Give two blocks, first-run and update, with this session's branch name
+   filled in:
 
    ```bash
-   git clone https://github.com/timmascara/knox-game-idea.git   # first time only
+   cd ~
+   git clone https://github.com/timmascara/knox-game-idea.git
    cd knox-game-idea
-   git fetch origin && git checkout <this session's branch> && git pull
+   git checkout <this session's branch>
    npm install
    npm run dev
    ```
 
-   A standing instruction from the owner, not a nicety. Only merge to `main`
-   when they say so.
+   ```bash
+   cd ~/knox-game-idea
+   git fetch origin
+   git checkout <this session's branch>
+   git pull
+   npm install
+   npm run dev
+   ```
+
+   Only merge to `main` when they say so.
 1. Commit and push. Never leave work sitting only in the working tree.
 2. Update this file. Change *Where we are* if the stage moved, *Next stage* if
    you learned something that changes the plan, and *Decisions already made*
@@ -59,15 +80,24 @@ reads automatically, so if it is not written here it did not happen.
 
 ```bash
 npm install
-npm run dev                    # dev server
-npm run build && npm run preview   # production build on :4173
-npm run test:smoke             # headless test — run this before every push
-node scripts/capture.mjs all   # contact sheets of every move + the jumper → screenshots/
-node scripts/capture.mjs poses # the rigged hand in each pose, close up
-node scripts/capture.mjs shoot shothands flight net meter   # just the shooting captures
-ZONE=green node scripts/shots.mjs          # shot lab: fire a zone from many spots, report outcomes
+npm run dev
+npm run build && npm run preview
+npm run test:smoke
+node scripts/capture.mjs all
+node scripts/capture.mjs poses
+node scripts/capture.mjs shoot shothands flight net meter
+ZONE=green node scripts/shots.mjs
 ZONE=iron ERRS=0.04,-0.04 SPOTS='[[0,6.5]]' PARAMS='{"ironDepth":0.05}' node scripts/shots.mjs
 ```
+
+In order: install; the dev server; the production build served on :4173;
+the headless test (run it before every push); contact sheets of every move
+and the jumper into `screenshots/`; the rigged hand in each pose, close up;
+just the shooting captures; the shot lab over a whole timing zone; and the
+shot lab with overrides.
+
+No `#` comments in these blocks on purpose — macOS zsh passes them through
+as arguments, which breaks the command (see rule 0 above).
 
 Sound files go in `src/assets/audio/` and are picked up automatically; see
 that folder's README and the Audio section below.
