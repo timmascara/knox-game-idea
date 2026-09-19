@@ -89,6 +89,28 @@ If a folder holds several mesh files the script prefers the most web-friendly
 format, then the largest file. A pack shipping the same model as `.blend`,
 `.obj`, `.dae` **and** `.fbx` only needs one of them kept.
 
+## Per-model overrides: `meta.json`
+
+Drop a `meta.json` beside the mesh for what no file format carries reliably:
+
+```json
+{ "scale": 0.01, "heightTint": ["#5e6e22", "#8dbf45"] }
+```
+
+- `scale` — FBX is often authored in centimetres. The preview's bounds line
+  is how you find out: a grass clump reporting 189 m wide wants `0.01`.
+- `heightTint` — `[base, tip]` colours baked as vertex colours by height. For
+  foliage whose only texture was a gradient the pack forgot to ship.
+
+## Textures the pack never shipped
+
+An FBX that points at `C:\Users\<author>\...\grass_Color.jpg` was exported
+without its textures, and no amount of searching the download will find
+them. The pipeline looks the file up by name anywhere in the folder and,
+failing that, drops the reference so the model still converts, untextured
+(it says so in the log). Modelled-blade grass survives this fine with a
+`heightTint`; a texture-atlas model does not, and wants a different download.
+
 ## Known gaps
 
 - **Animations in separate files** (the Mixamo pattern) are not merged. The

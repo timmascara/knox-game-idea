@@ -22,7 +22,7 @@
  * glTF packs roughness in a metallicRoughness texture's G channel, so a
  * standalone roughness map is rechannelled rather than attached as-is.
  */
-import { NodeIO } from '@gltf-transform/core';
+import { NodeIO, Accessor } from '@gltf-transform/core';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import sharp from 'sharp';
@@ -73,6 +73,54 @@ const doc = await io.read(glbPath);
 const root = doc.getRoot();
 const mtl = parseMtl(srcDir);
 const changes = [];
+
+// Optional per-model overrides, for what no file format carries reliably.
+//   scale       — FBX is often authored in centimetres; 0.01 brings it to metres.
+//   heightTint  — [base, tip] colours baked as vertex colours by height, for
+//                 foliage whose only texture was a gradient the pack forgot.
+const metaPath = join(srcDir, 'meta.json');
+const meta = existsSync(metaPath) ? JSON.parse(readFileSync(metaPath, 'utf8')) : {};
+
+if (meta.scale && meta.scale !== 1) {
+  for (const scene of root.listScenes()) {
+    for (const node of scene.listChildren()) {
+      node.setScale(node.getScale().map((v) => v * meta.scale));
+    }
+  }
+  changes.push(`scale x${meta.scale} applied at the scene roots`);
+}
+
+if (meta.heightTint) {
+  // glTF vertex colours are linear; the hex values are sRGB. Skip this and the
+  // tint comes out washed out.
+  const toLinear = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  const hex = (h) => [1, 3, 5].map((i) => toLinear(parseInt(h.slice(i, i + 2), 16) / 255));
+  const [lo, hi] = meta.heightTint.map(hex);
+  const buffer = root.listBuffers()[0] || doc.createBuffer();
+  for (const mesh of root.listMeshes()) {
+    for (const prim of mesh.listPrimitives()) {
+      const pos = prim.getAttribute('POSITION');
+      if (!pos) continue;
+      const n = pos.getCount();
+      let ymin = Infinity, ymax = -Infinity;
+      const v = [0, 0, 0];
+      for (let i = 0; i < n; i++) { pos.getElement(i, v); ymin = Math.min(ymin, v[1]); ymax = Math.max(ymax, v[1]); }
+      const span = Math.max(1e-6, ymax - ymin);
+      const col = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) {
+        pos.getElement(i, v);
+        const t = Math.pow((v[1] - ymin) / span, 0.8);
+        for (let c = 0; c < 3; c++) col[i * 3 + c] = lo[c] + (hi[c] - lo[c]) * t;
+      }
+      const acc = doc.createAccessor().setType(Accessor.Type.VEC3).setArray(col).setBuffer(buffer);
+      prim.setAttribute('COLOR_0', acc);
+      const m = prim.getMaterial();
+      // Blades are matte; whatever specular the FBX carried reads as plastic.
+      if (m) m.setBaseColorFactor([1, 1, 1, 1]).setRoughnessFactor(0.9).setMetallicFactor(0).setDoubleSided(true);
+    }
+  }
+  changes.push(`heightTint baked as COLOR_0 (${meta.heightTint[0]} base → ${meta.heightTint[1]} tip)`);
+}
 
 /** Load an external image into the document as a Texture. */
 function addTexture(rel, name) {

@@ -190,6 +190,25 @@ smaller**, textures embedded, leaves masking correctly.
 - Extracted textures are gitignored (`assets_raw/**/*.png` etc). The archive
   is the committed artifact; everything else regenerates.
 
+**Converted so far** (each verified by preview, not by size):
+
+| asset | source | out | notes |
+|---|---|---|---|
+| `tree.glb` | obj + .7z textures | 1.06 MB | **nine trees in one file**, 46 m span; needs splitting to instance |
+| `grass.glb` | fbx, textures never shipped | 80 KB | modelled blades, two clumps 1.9 m; `meta.json` scale 0.01 + heightTint |
+| `assets_raw/leaf_decals/` | zip | — | leaf/petal cut-out textures, not a model; for scatter quads |
+
+**Pack quality is the real bottleneck, not the pipeline.** Three downloads,
+three surprises: the tree was nine trees, the grass shipped with no
+textures (FBX paths into the author's `C:\Users`), the "pavement" pack was
+leaf decals with no pavement. Expect every pack to need looking at.
+**Still missing for the park: a tiling ground/grass surface and an asphalt
+court surface.** Poly Haven (CC0, complete sets) is the obvious source and
+is **blocked from this sandbox** (`api.polyhaven.com` CONNECT refused), so
+the owner has to download those; 1K JPG zips are a few MB each. If they
+would rather not, both generate acceptably from noise — the court less well
+than the grass.
+
 **Not solved:** animations in separate files (the Mixamo pattern) are not
 merged, and nothing splits a multi-object file into separately placeable
 models — which the tree pack needs before it can be instanced around a park.

@@ -28,8 +28,8 @@
  * python3 with pillow. gltf-transform is fetched by npx on demand.
  */
 import { execFileSync } from 'node:child_process';
-import { readdirSync, statSync, mkdirSync, rmSync, existsSync } from 'node:fs';
-import { join, extname, basename } from 'node:path';
+import { readdirSync, statSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, extname, basename, dirname, relative } from 'node:path';
 
 const RAW = 'assets_raw';
 const OUT = 'src/assets';
@@ -75,6 +75,71 @@ function dirSize(dir) {
     n += st.isDirectory() ? dirSize(p) : st.size;
   }
   return n;
+}
+
+/**
+ * Point every image URI in the interim glTF at a file that exists.
+ *
+ * FBX and some OBJ exports carry the texture path from the author's machine
+ * (`C:\\Users\\...\\grass_Color.jpg`). assimp writes that through verbatim,
+ * and the next stage crashes trying to open it. The file's *name* is usually
+ * right, so look the basename up anywhere under the source folder. When it
+ * is nowhere — the pack shipped without its textures — drop the reference
+ * so the material comes through untextured rather than the whole model
+ * failing to convert.
+ */
+function resolveImageUris(interim, dir) {
+  const j = JSON.parse(readFileSync(interim, 'utf8'));
+  if (!j.images?.length) return [];
+  const byName = new Map();
+  (function walk(d) {
+    for (const e of readdirSync(d)) {
+      const p = join(d, e);
+      if (statSync(p).isDirectory()) walk(p);
+      else byName.set(e.toLowerCase(), p);
+    }
+  })(dir);
+  const notes = [];
+  const dropped = new Set();
+  j.images.forEach((img, i) => {
+    if (!img.uri || img.uri.startsWith('data:')) return;
+    const uri = decodeURIComponent(img.uri);
+    if (existsSync(join(dirname(interim), uri))) return;
+    const base = uri.split(/[\\/]/).pop();
+    const hit = byName.get(base.toLowerCase());
+    if (hit) {
+      img.uri = relative(dirname(interim), hit).split('\\').join('/');
+      notes.push(`texture found by name  ${base}`);
+    } else {
+      dropped.add(i);
+      notes.push(`texture MISSING        ${base} — material left untextured`);
+    }
+  });
+  if (dropped.size) {
+    // Remove the dead images and every texture that used them, then renumber
+    // the survivors and unlink any material slot that pointed at a casualty.
+    const imgMap = new Map();
+    j.images = j.images.filter((img, i) => (dropped.has(i) ? false : (imgMap.set(i, imgMap.size), true)));
+    const texMap = new Map();
+    j.textures = (j.textures || []).filter((t, i) => {
+      if (dropped.has(t.source)) return false;
+      t.source = imgMap.get(t.source);
+      texMap.set(i, texMap.size);
+      return true;
+    });
+    const fix = (o) => {
+      if (!o || typeof o !== 'object') return;
+      for (const k of Object.keys(o)) {
+        const v = o[k];
+        if (v && typeof v === 'object' && typeof v.index === 'number' && /Texture$/.test(k)) {
+          if (texMap.has(v.index)) v.index = texMap.get(v.index); else delete o[k];
+        } else fix(v);
+      }
+    };
+    (j.materials || []).forEach(fix);
+  }
+  writeFileSync(interim, JSON.stringify(j));
+  return notes;
 }
 
 /** Remove every file the interim conversion dropped in the source folder. */
@@ -129,6 +194,7 @@ for (const name of folders) {
     // otherwise, since it no-ops when it finds no .mtl.
     let optimizeFrom = src;
     if (src === interim) {
+      for (const n of resolveImageUris(interim, dir)) console.log(`  ${n}`);
       const fix = execFileSync('node', ['scripts/fix_materials.mjs', interim, dir, fixed], { stdio: 'pipe' });
       const msg = fix.toString().trim();
       if (msg && !msg.startsWith('no material')) {
