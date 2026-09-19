@@ -1,0 +1,42 @@
+# Blender 5.1.2 MTL File: 'grass.blend'
+# www.blender.org
+
+newmtl Default
+Ns 40.551991
+Ka 1.000000 1.000000 1.000000
+Ks 0.800000 0.800000 0.800000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd C:/Wild_Grass_1_Default_grass_green_and_orange_bottom_Color.jpg
+
+newmtl Default.001
+Ns 40.551991
+Ka 1.000000 1.000000 1.000000
+Kd 0.800000 0.800000 0.800000
+Ks 0.800000 0.800000 0.800000
+Ke 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+
+newmtl Default_1
+Ns 40.551991
+Ka 1.000000 1.000000 1.000000
+Kd 0.800000 0.800000 0.800000
+Ks 0.800000 0.800000 0.800000
+Ke 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+
+newmtl Default_1.001
+Ns 40.551991
+Ka 1.000000 1.000000 1.000000
+Ks 0.800000 0.800000 0.800000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd C:/Wild_Grass_1_Default_1_grass_green_and_orange_bottom_Color.jpg
