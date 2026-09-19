@@ -55,8 +55,11 @@ export class Hoop {
     const w = HOOP.backboardWidth;
     const h = HOOP.backboardHeight;
     const th = HOOP.backboardThickness;
-    // Backboard front face 0.15 m behind the rim centre.
-    const zFront = 0.15;
+    // Regulation: the rim's back edge is 0.15 m in front of the glass, so the
+    // front face sits rimRadius + 0.15 behind the rim centre. (It used to be
+    // 0.15 from the centre, which put the back of the rim inside the board
+    // and made a clean centre-cut shot brush the glass on its way down.)
+    const zFront = 0.15 + HOOP.rimRadius;
     const centerY = 0.42; // above rim centre
     const board = new THREE.Group();
     board.position.set(0, centerY, zFront + th / 2);
@@ -109,6 +112,8 @@ export class Hoop {
     this._boardH = h;
     this._boardTh = th;
     this._boardCenterY = centerY;
+    /** Distance from the rim centre to the front face of the glass. */
+    this.boardFrontOffset = zFront;
   }
 
   _buildRim() {
@@ -123,12 +128,13 @@ export class Hoop {
     this.group.add(torus);
     this.rimMesh = torus;
 
-    // Connector bracket from rim back to backboard.
+    // Connector bracket from the back of the rim to the backboard.
+    const gap = this._boardZ - this._boardTh / 2 - HOOP.rimRadius; // tube back edge → glass
     const bracket = new THREE.Mesh(
-      new THREE.BoxGeometry(0.12, 0.05, 0.15 + 0.02),
+      new THREE.BoxGeometry(0.12, 0.05, gap + 0.04),
       rimMat
     );
-    bracket.position.set(0, 0, 0.15 / 2 + HOOP.rimRadius * 0.25);
+    bracket.position.set(0, -0.01, HOOP.rimRadius + gap / 2);
     this.group.add(bracket);
   }
 
@@ -194,8 +200,10 @@ export class Hoop {
     );
     this.physics.tagCollider(board, 'backboard');
 
-    // Rim: ring of small spheres forming the torus.
-    const N = 20;
+    // Rim: ring of small spheres forming the torus. Dense enough that the
+    // spheres overlap, so a ball skimming the iron feels a smooth ring rather
+    // than a row of bumps — back-rim caroms must be repeatable.
+    const N = 40;
     for (let i = 0; i < N; i++) {
       const a = (i / N) * Math.PI * 2;
       const x = Math.cos(a) * HOOP.rimRadius;
@@ -237,12 +245,18 @@ export class Hoop {
     return new THREE.Vector3(0, 0, -1).applyEuler(this.group.rotation).normalize();
   }
 
+  /**
+   * Step the net. Returns how many net nodes the ball touched, which the
+   * caller turns into drag on the ball.
+   */
   update(dt, ballWorldPos, ballRadius) {
-    // Feed the ball into the net simulation in net-local space.
+    let contacts = 0;
     if (ballWorldPos) {
       const local = this.group.worldToLocal(ballWorldPos.clone());
-      this.net.interact(local, ballRadius);
+      contacts = this.net.interact(local, ballRadius);
     }
     this.net.update(dt);
+    this.netContacts = contacts;
+    return contacts;
   }
 }

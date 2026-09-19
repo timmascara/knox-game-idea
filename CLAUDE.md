@@ -13,7 +13,16 @@ the next thing.
 - **Stage 1 — the handle. Done and verified in real play.** Open outdoor
   court, VR-style hands (no arms, no legs), a real basketball, and a dribble
   engine. Deployed, mouse capture confirmed working by the owner.
-- **Stage 2 — shooting. Not started.** See *Next stage* below.
+- **Stage 2 — shooting. Built, played once by the owner, first feedback
+  applied.** A 2K-style jumper with a timing meter, deterministic outcomes
+  by zone, layups inside 2.6 m that go in off the glass, a physics net that drops a made ball under
+  the rim, a synthesised swish, a plain jump, and rebindable controls. See
+  *Shooting* below. The owner's first-play notes were: a jump key that
+  feels right while moving, layups, and the ball not running away after a
+  make — all done; the sounds and the meter speed still have no verdict.
+- **Stage 3 — the park. Chosen by the owner, not started.** See *The
+  owner's actual goal*. The asset pipeline is built; nothing loads a model
+  into the world yet.
 
 ## Leave the repo ready for the next session
 
@@ -21,6 +30,42 @@ The owner works in short chats, roughly one per feature, tweak or bug. A
 session that ends without updating the repo strands the next one. So before
 you finish **any** piece of work, however small:
 
+0. **Hand the owner a local run terminal with every update, and never merge
+   to `main` without their go-ahead.** They test locally first; `main` is
+   what publishes. A standing instruction from the owner, not a nicety.
+
+   **Never put a `#` comment in a block the owner will paste.** They are on
+   macOS, whose zsh does *not* strip `#` comments at an interactive prompt
+   (`INTERACTIVE_COMMENTS` is off by default). A line like
+   `git clone <url>   # first time only` sends git five arguments and fails
+   with "Too many arguments", and then every following line fails too
+   because the clone never happened. This actually happened; it cost the
+   owner a round trip. Put the explanation in prose outside the block, and
+   keep the block pure commands, one per line — no `#` anywhere, not even
+   on its own line.
+
+   Give two blocks, first-run and update, with this session's branch name
+   filled in:
+
+   ```bash
+   cd ~
+   git clone https://github.com/timmascara/knox-game-idea.git
+   cd knox-game-idea
+   git checkout <this session's branch>
+   npm install
+   npm run dev
+   ```
+
+   ```bash
+   cd ~/knox-game-idea
+   git fetch origin
+   git checkout <this session's branch>
+   git pull
+   npm install
+   npm run dev
+   ```
+
+   Only merge to `main` when they say so.
 1. Commit and push. Never leave work sitting only in the working tree.
 2. Update this file. Change *Where we are* if the stage moved, *Next stage* if
    you learned something that changes the plan, and *Decisions already made*
@@ -37,18 +82,51 @@ reads automatically, so if it is not written here it did not happen.
 
 ```bash
 npm install
-npm run dev                    # dev server
-npm run build && npm run preview   # production build on :4173
-npm run test:smoke             # headless test — run this before every push
-node scripts/capture.mjs all   # contact sheets of every move → screenshots/
-node scripts/capture.mjs poses # the rigged hand in each pose, close up
-npm run assets                 # assets_raw/<name>/ → src/assets/<name>.glb
-npm run assets:preview -- tree # screenshot a converted asset on its own
+npm run dev
+npm run build && npm run preview
+npm run test:smoke
+node scripts/capture.mjs all
+node scripts/capture.mjs poses
+node scripts/capture.mjs shoot shothands flight net meter
+ZONE=green node scripts/shots.mjs
+ZONE=iron ERRS=0.04,-0.04 SPOTS='[[0,6.5]]' PARAMS='{"ironDepth":0.05}' node scripts/shots.mjs
+ZONE=bank ERRS=-0.3,0,0.15,0.19 SPOTS='[[0.5,11.8],[0.3,12.1],[-0.9,11.9],[0.7,12.4],[-0.4,11.7],[0,10.8],[1.5,11.5],[0,9.9],[-2,11.2],[2.2,12.3],[0,10.0],[1.7,10.6]]' node scripts/shots.mjs
+ZONE=bank ERRS=0.15 SPOTS='[[0,10.8]]' TRACE=1 node scripts/shots.mjs
+node scripts/restitution.mjs
+npm run assets
+npm run assets:preview -- tree
 ```
 
-`smoke.mjs` and `capture.mjs` both need `npm run preview` serving on :4173.
-There is no GPU here; both run headless Chromium with SwiftShader, and
-`capture.mjs` is how you review animation without being able to play it.
+In order: install; the dev server; the production build served on :4173;
+the headless test (run it before every push); contact sheets of every move
+and the jumper into `screenshots/`; the rigged hand in each pose, close up;
+just the shooting captures; the shot lab over a whole timing zone; the
+shot lab with overrides; the layup bank lab over the twelve takeoff spots
+it is verified from; and a traced run — `TRACE=1` prints the ball's
+position, velocity and net contacts every other tick for each failing row
+(`TRACE=all` for every row), which is how the sub-step restitution bug was
+found. A spot inside layup range is always a layup, whatever `ZONE` says,
+and is graded as a bank. Then the Rapier bounce regression check (see
+*Conventions*); the asset pipeline, `assets_raw/<name>/` → 
+`src/assets/<name>.glb`; and a screenshot of one converted asset on its own
+(see *Bringing in art*).
+
+No `#` comments in these blocks on purpose — macOS zsh passes them through
+as arguments, which breaks the command (see rule 0 above).
+
+Sound files go in `src/assets/audio/` and are picked up automatically; see
+that folder's README and the Audio section below.
+
+`smoke.mjs`, `capture.mjs`, `shots.mjs` and `restitution.mjs` all need `npm run preview`
+serving on :4173. There is no GPU here; all run headless Chromium with
+SwiftShader, and `capture.mjs` is how you review animation without being
+able to play it. `shots.mjs` is how you tune an outcome: it releases at the
+requested timing errors from each spot and prints the zone the game graded,
+the physical result, rim/board hit counts and the release continuity, and
+`PARAMS` writes into the live `SHOT` constants so an aim offset can be swept
+without rebuilding. Note its timing is quantised to the 120 Hz tick, so a
+requested error right at a zone boundary can grade as the neighbour — read
+the `zone` column, not the `err` you asked for.
 
 ## Bringing in art — the asset pipeline
 
@@ -123,10 +201,18 @@ A change that breaks one of these is wrong even if it looks fine:
 1. The ball never dips below the court surface.
 2. Ball velocity is continuous across every catch and release (no snapping).
    Measured in the handle frame so running does not count as a discontinuity.
-3. The carrying palm stays within ~2 cm of the ball surface while carrying.
+   This includes the whole jumper: gather → set → rise → flick, and the
+   launch itself (`stats.maxReleaseJump`, the gap between what the hand was
+   doing at the release instant and the velocity the ball was given, must
+   stay under 0.5 m/s; it is ~0.15).
+3. The carrying palm stays within ~2 cm of the ball surface while carrying,
+   and the shooting palm through the shot.
 4. Every move hands off to the intended hand and returns to a pound rhythm.
 5. Buffered moves chain; drop and re-gather works.
-6. Nothing goes non-finite.
+6. A green release swishes (from the hold and from a moving pull-up); a
+   late release goes off the glass, a slightly late one catches back iron, a
+   very early one airballs. Deterministic — no randomness anywhere in the shot.
+7. Nothing goes non-finite.
 
 ## The dribble engine — concepts you need before editing it
 
@@ -159,6 +245,219 @@ drags them. The carrying palm tracks the ball exactly; the free hand follows
 it down then rises ahead to meet it; a hand receiving a crossover moves early
 to hover over the arrival point rather than chasing.
 
+## Shooting — how it works
+
+Read `src/ball/Shot.js` (pure maths) and the SHOOTING section of
+`DribbleController` (the states) before touching it. Every feel number is
+in `SHOT` in `Constants.js`; the Tab panel has a SHOT TUNING section.
+
+**Catching.** Looking at a ball within 2.3 m (the look ray passing within
+~0.4 m of its centre) catches it whatever it is doing — off the iron,
+rolling, in the air, up to 10 m/s (`_lookCatch`); the gather absorbs the
+velocity. Walking into a slow ball still works without looking; the pick
+up key reaches 2.3 m / 8 m/s. The owner's ask: "pick it up whenever my
+cursor looks at it" — before this, a rebound coming back off the rim
+could not be caught.
+
+**Hands and the hop.** The handle frame's floor stays put through a hop
+so a *dribble's* bounce path does not lift. Everything else rides the
+body: while holding (or gathering) the frame follows the feet, so the held
+ball rises with you; the free hands' rest / guard / follow-through targets
+add `bodyLift` (feet minus frame floor). Before this the hands and a held
+ball stayed at floor height when you jumped and visibly detached.
+
+**Input.** Every action goes through the binding map (`src/core/Bindings.js`,
+stored in Settings, edited in the pause menu's Controls panel; game code
+asks `input.down('shoot')` / `pressedAction('jump')`, never a key). Defaults
+(the owner's choice, second play-test): **shoot = K, jump = J**, crossover
+= left mouse, between = right mouse, behind Q, in&out F, hesitation R, low
+C, pick up E, drop G, sprint Shift. WASD, Tab and Esc are reserved.
+`BINDINGS_VERSION` in `Bindings.js` is bumped when the defaults change, and
+Settings then replaces a saved layout with the new one — the owner's
+browser had the old defaults persisted. Hold K to start a jumper (from the
+hold or straight out of a live dribble, whichever hand), let go to release.
+A tap releases immediately (an airball, as in 2K). Movement input locks for
+the duration but the feet keep momentum — a jumper decelerates at
+`PLAYER.shotDecel` (10 m/s²) — and the body squares up to the basket on
+its own while the head stays free (the handle frame's yaw is driven by the
+hoop direction during a shot, not the camera). The plain jump
+(`PLAYER.jumpSpeed`) works any time the body is not mid-shot; jumping while
+dribbling leaves the bounce path on the floor, by the handle frame's design.
+
+**Layups are J then K.** Inside `SHOT.layupRange` (2.6 m) of the rim,
+the jump key with the ball is the takeoff (`tryLayupTakeoff`, asked by the
+game before it does a plain hop): the feet leave the floor on that tick at
+`layupJumpSpeed` (5.0 → ~0.7 m, 0.55 s in the air), momentum carries the
+body at the rim (no deceleration: it is airborne from t = 0), the ball
+sweeps from wherever it was — hip, or mid-bounce — up the shooting side to
+`layupCarry` beside the head in **one continuous motion** (no set point;
+the first cut paused at a chest-high gather and the ball rushed there and
+stalled, a visible stutter that also tripped the velocity invariant), then
+a short extension (`layupExtension`, 0.30) at the rim, one hand, palm up,
+and the camera leans into the drive. A *tap* of the shoot key while airborne releases. The
+release point is `layupReleaseAfterApex` (0.08 s) past the top of the jump
+(`layupTiming()` in `Shot.js` derives the clock from the jump speed); a
+tap *before* that is held (`shot.armed`) and the ball leaves at that point,
+a tap after leaves at once — so J then K in any quick succession always
+releases up at the rim with the full animation. **Uncontested, every tap
+while airborne goes in, off the glass** (`layupWindow` is 9 s, i.e. the
+whole airtime): the owner's calls, "jump with J, click K once, make it
+every time" and "nobody scores layups as a swish, it's always a bank off
+the backboard" — the first build dropped them softly through the net and
+the owner rejected it, so a made layup is a bank, never a swish, and the
+HUD calls it LAYUP. The meter and timing flash are not shown for an
+uncontested layup — there is nothing to time. Contested (`contested`
+hook) narrows the window to `layupContestedWindow` and brings the meter
+back. No tap before the feet land → `_landWithBall`: the ball gathers back
+into the hold, no shot.
+
+**The bank is an exact carom solve** (`solveBank` in `Shot.js`, zone
+`BANK`, kind-aware `aimFor`). In board axes (normal, lateral, up) the ball
+flies from the hand to a contact point on the glass a chosen height above
+the rim, bounces with Rapier's restitution (0.72, measured) and keeps 5/7
+of its tangential velocity (Rapier's friction brings a solid sphere to
+rolling; measured 0.70–0.71 in-game — ignoring it left wide-angle caroms
+30 % short and on the near iron), and comes down through the rim centre.
+The normal axis fixes the carom time from the flight time, the lateral
+axis is then linear, and one bisection in the flight time makes the
+carom's height hit zero at the centre. Candidate kiss heights are tried
+in order (0.30 m first, up to 0.80 — the board runs to 0.945 above the
+rim); a candidate is rejected if the ball's centre comes within
+`radius + tube + 15 mm` of the ring's centreline anywhere on the way in
+or on the way down (a true 3D distance — the first version used a
+vertical-wall test that rejected every straight-on bank), if it would
+rise through the hoop from below, if the contact is off the glass, or if
+the carom is not clearly descending at the rim. A layup is launched with
+**no backspin** (spin on the glass is a friction kick the model does not
+carry). `solveBank` returning null falls back to the old soft drop; in the
+lab it no longer does from anywhere in layup range.
+
+**The takeoff paces the drive** (`layupStandoff` 1.2 m, `layupLunge`
+2.5 m/s): at J the body's horizontal velocity is set toward the rim so the
+feet *land* 1.2 m from it wherever the takeoff was — a sprint slows, a
+standing start hops forward. The ball is carried ~0.75 m ahead of the
+feet, so every release, early or late on the way down, happens about half
+a metre from the rim. Two lessons here: pacing to reach the standoff *at
+the release* left late taps under the rim (the body kept drifting), and a
+0.8 m standoff did the same because of the carry. Before any of this, a
+sprinting drive covered the whole 2.3 m before the tap and released from
+under the rim, where nothing clean is possible. Taking off *inside* the
+standoff, the takeoff steps back to it instead (`layupFade`, up to 1.5
+m/s — a fade-away, and this one paces to the *release*, since the ball
+must be clear of the front iron when it leaves the hand or no bank can
+rise past it), the ball is carried overhead rather than out front
+(`load.z` shrinks toward 0.18 as the takeoff nears 0.5 m from the rim)
+and higher (`layupReachUp`, +0.2 m at the rim, a full reach-up); without
+all three, a takeoff beside the rim released the ball 7 mm from the front
+tube and the solver rightly refused it. Lab (`ZONE=bank`): 48/48 banks
+from twelve spots, right beside the rim to 2.5 m out, at taps from 0.3 s
+early to 0.19 s late, every one off the glass and through; smoke:
+J-then-K at once, at the top, late, from a sprint (each asserted made
+*with* a board hit), and no tap (lands holding the ball). The shoot key near
+the rim on the ground is *also* a takeoff (so K, K works) rather than a
+no-timing auto-layup, which would have made the window meaningless. The
+first build had the layup as hold-and-release on the shoot key with the
+hop timed inside it; the owner found they were already back on the floor
+by the release and asked for J-then-K.
+
+"Contested" in the owner's spec means a defender at the rim; there are no
+defenders, so the hook is `DribbleController.contested` (tightens the
+window to `layupContestedWindow`) and nothing sets it yet.
+
+**The timeline is fixed** (`SHOT.releaseTime` = 0.62 s is the green centre,
+the meter fills to `meterTime` = 0.84 s and auto-releases there). The whole
+jumper is one `Contact` path in the handle frame: current ball state →
+set point beside the right eye → load point above the forehead → release
+point = load + `extension` along the launch direction, whose end velocity
+*is* the world launch velocity that swishes (minus the body's velocity, so a
+pull-up compensates for momentum). The extension is a constant-acceleration
+segment so its duration follows from its length and the launch speed. The
+hop (`jumpSpeed`) is timed so its apex lands on the ideal release. Beyond
+the ideal point the ball travels `overhold` further and stalls in the hand.
+
+**Button-up → zone → flick → launch.** The timing error grades into a zone
+(`zoneFor`: green ≤ 0.03 s, iron ≤ 0.075, glass ≤ 0.135, else air). The
+ball is wherever it is on the path; a short "flick" `Contact` replans from
+that position and velocity to the launch velocity that zone's aim point
+needs (`aimFor`), so a bad release is still a continuous hand motion. The
+body's contribution is the *measured* frame velocity (`frameVel`), not the
+feet's: the handle frame trails the feet, and while they decelerate the two
+differ by enough to show in the continuity stat. At
+the flick's end the launch is re-solved from the ball's actual world
+position and the ball goes free with backspin. If the flick ends part-way
+through a tick, both position *and* velocity are advanced by the remainder
+— forgetting the velocity gave the ball a phantom +g·dt upward kick that
+cost an afternoon and only showed up as "green shots 8 cm long".
+
+**The arc solver** (`solveLaunch`) is closed-form and includes Rapier's
+linear damping; it lands within ~5 mm at the rim. Arcs are defined by the
+entry angle at the rim (47°), not an apex, which keeps the shape the same
+from every distance. Close to the basket a fixed entry angle cannot clear
+the front iron, so `entryFor` swaps to a minimum-apex rule (`minApexSwish`,
+`minApexIron`).
+
+**Outcomes are aim points, physics does the rest.** Swish: rim centre + 2 cm.
+Back iron: the ball's centre crosses the rim plane `ironDepth` past the back
+tube, so it meets the top of the back iron and pops out long. Glass: the
+board `glassHeight` above the rim, `glassSide` across on the *far* side from
+the shooter (the near side too often banks in), early releases a touch
+lower. Airball: `airShort` short of the front rim and `airDrop` below it,
+flat when early, floaty when late. `scripts/shots.mjs` verified these from
+16+ spots across the court (deep threes, corners, the far hoop) at the
+edges of every zone: green 100%, glass 100%, air 100%, iron ~97%.
+
+**Known gap: inside ~0.8 m of the rim** a slightly-off release can hit the
+back iron and still fall in, and from directly under the rim nothing is
+guaranteed. That is layup territory; a jumper from there is the wrong
+animation anyway.
+
+**After release** `ShotTracker` (in `Shot.js`) watches the ball: rim / board
+/ court contacts come from the physics contact events via
+`DribbleController.onBallContact`, and the make detector is the two-stage
+one from the old game (pending on descending through the rim plane inside
+the hoop, confirmed clearly below, cancelled if it pops back up). Its miss
+rule must never fire before the apex — an early release starts below the
+rim. Results: swish, made, iron, glass, air. The HUD flashes the timing
+("SLIGHTLY LATE") on button-up and the result when it is decided.
+
+**The net** (`Net.js`) is a verlet cloth rendered as instanced cord
+cylinders and knots (no more 1 px lines): 12 loops, diamond weave, hanging
+loops on the rim, full 3D sphere push-out so a ball pushes the cords apart
+and drags the net down, then it whips back and swings. The number of nodes
+the ball touches becomes drag on the ball (`Basketball.applyNetDrag`),
+strongly anisotropic (`BALL.netDragHorizontal` 22 /s vs `netDragVertical`
+3.5 /s): a net catches nearly all of the ball's forward motion and only a
+little of its fall, so a made shot drops out under the rim, bounces and
+settles there instead of carrying on downcourt (the owner's first
+complaint; the smoke test now checks the ball rests within 1.5 m of the
+rim after a swish). The same contact drives the swish sound from
+`Game._update` (physical: any ball through the net sounds, a rattled make
+included).
+
+**Audio: the synths are placeholders and the owner knows it.** They have
+heard them and called them not great, and plan a day of uploading recorded
+assets. So the pipeline is built and verified: **any file dropped into
+`src/assets/audio/` named after a sound plays instead of that synth**, with
+no code change — `swish.wav`, `rim.wav`, plus `rim-2.wav`/`rim-3.wav` as
+extra takes picked at random (never the same twice running).
+`src/audio/Samples.js` globs the folder at build time and lists the
+recognised names; `AudioManager._playSample` is the first line of each sfx
+method and bails out to the synth when there is no file.
+`src/assets/audio/README.md` is written for the owner — the naming table,
+the several-takes trick, where the per-sound gain lives. Unrecognised
+filenames are ignored and warned about in the console.
+
+Verified end to end in headless Chromium with generated test WAVs: files
+decode, sampled sounds take the sample path, unsampled ones fall through,
+takes never repeat back to back. The test files were deleted afterwards —
+do not commit placeholder audio, an empty folder is the correct state.
+
+Do not spend time re-tuning the synths; they are being replaced. Spend it
+on the loader if anything about an upload does not work. The synth versions
+(swish = white noise through a sweeping bandpass over a lower whoosh with
+cord snaps; rim = an inharmonic partial set over a thud; glass = a board
+thump with a ring) stay as the fallback so the game is never silent.
+
 ## The hands
 
 `src/assets/hand_right.glb` is a **third-party sculpt supplied by the owner**
@@ -186,9 +485,35 @@ straightens.
   not persisted.
 - Fixed 120 Hz simulation step (`Game.fixedDt`) so timing is identical at any
   frame rate. Edge-triggered input applies only to the first sub-step.
+  **The Rapier world's timestep is set to match** (`Physics.setTimestep`).
+  It defaulted to 1/60 while being stepped 120×/s, so every free ball used
+  to run at double speed; the dribble never noticed because it is the
+  controller's own maths. Do not remove that call.
+- **Rapier's contact prediction distance is set to 0.5 mm**
+  (`normalizedPredictionDistance` in `Physics.js`; the default is 2 mm).
+  With the default, a step ending with the ball 0.5–2 mm short of a
+  surface makes a "predicted" contact that stops the ball at the surface
+  *without bouncing it*, and the next step bounces the near-zero remainder:
+  measured restitution 0.23–0.42 instead of 0.72 for about one contact
+  phase in five, on every surface (glass, iron, court). It showed up as one
+  bank layup in eight dying on the glass and dropping onto the back iron —
+  identical launch, different sub-step phase. `node scripts/restitution.mjs`
+  is the regression check: it fires the same free ball at the board from
+  eleven sub-step phases and fails unless every one reads 0.72. Penetrating a few mm before the real bounce is corrected
+  positionally and does not change the bounce velocity (verified).
 - `Game._update(dt)` is public so tests can pump the loop deterministically.
-- `window.__game`, `window.__THREE`, `window.__POSES` are exposed for the
-  capture and smoke harnesses.
+- `window.__game`, `window.__THREE`, `window.__POSES`, `window.__CONST`
+  (`{ SHOT, DRIBBLE }`, live) are exposed for the capture, smoke and shot-lab
+  harnesses.
+- **Rapier integrates positions exactly** (velocity-Verlet-like, so
+  x = x₀ + v₀t + ½at² with no ½·a·dt·t drift); a continuous-time solver
+  matches it. Do not add a "symplectic correction" — that was tried and it
+  made things worse.
+- **Hoop geometry:** the glass is `rimRadius + 0.15` behind the rim centre
+  (regulation). It used to be 0.15 from the *centre*, which put the back of
+  the rim inside the board and made centred shots brush the glass on the way
+  down. The rim collider is now 40 overlapping spheres so the iron feels
+  like a smooth ring.
 
 ## Hosting and the pointer-lock situation
 
@@ -260,41 +585,62 @@ lands (all verified absent by grep):
 - **No `LOD` or `Sprite`.** Nothing for distant kids as billboard imposters.
 - **No environment map** anywhere — `scene.environment` is never set, so every
   `MeshStandardMaterial` is running PBR with no IBL. Cheap, large win.
-- **Audio is 100% synthesized oscillators** (`AudioManager.js`), with no file
-  loading at all. Bird and park ambience need a sample loader that does not
-  exist.
+- **Audio sfx are drop-in** (`src/assets/audio/`, see the Audio section),
+  but only one-shot effects keyed to game events. Bird and park *ambience*
+  is a looping bed with no event to trigger it — that needs a small
+  addition to `AudioManager`, not a new loader.
 
 Budget for the whole park, over GitHub Pages: **8–12 MB** of assets is
 realistic and enough. The JS bundle is already 5.3 MB (2.0 MB gzipped). Note
 `assetsInlineLimit` is 4 MB in `vite.config.js` — at park scale the single-file
 artifact build stops being viable and the Pages build becomes the only target.
 
-**Open question for the owner:** whether the park comes before or after
-shooting. They have not said, and the sequencing is theirs to choose.
+**Decided 2026-09-19 by the owner: shooting is done; stage 3 is the park.**
+Defenders and contested shooting (below) stay the want after that.
 
-## Next stage: shooting
+## Shooting still wants a second play-test
 
-Nothing is built yet. What is already in place to build on:
+The owner has played the jumper once; layups, the jump key, rebinding, and
+the ball settling under the rim came out of that and have only been
+verified headless. Still wanting a verdict from real play:
 
-- `solveArc()` in `src/core/MathUtils.js` — ballistic launch solver, currently
-  unused, kept for this.
-- `src/world/Hoop.js` — regulation rim built as a ring of sphere colliders so
-  the ball can drop through and rattle, plus backboard and pole colliders.
-- `src/world/Net.js` — verlet net that swishes when the ball passes.
-- `DribbleController` owns possession. Shooting is a **new state alongside
-  `CONTACT`/`FLIGHT`**, entered from `HOLD` or from a gather out of a dribble.
+- The new defaults (right-mouse shoot, Space jump) — or whatever the owner
+  rebinds them to.
+- The layup as a bank: the kiss height (0.30 m above the rim when the
+  geometry allows, taller from a low or close release), the fade from a
+  takeoff at the rim, and how it reads from the eyes
+  (`node scripts/capture.mjs layup`). Verified headless only.
 
-Reference, do not paste back: commit `bb515cf` has a complete older shooting
-system in `src/ball/Shot.js` and `src/ball/BallController.js` — timing-based
-gather → set → release graded green/yellow/orange/red, layups, dunks, and a
-two-stage make detector (pending when the ball descends through the rim plane
-inside the hoop, confirmed once clearly below, cancelled if it pops back up).
-That make detector is sound and worth reusing conceptually. The rest was built
-on the old dribble model and will not fit the current one.
+**Contested shooting is the owner's next real want, and it is the bridge to
+multiplayer** — their stated end goal for the game. The ask, in their
+words: how contested a shot was should affect whether it goes in *even on a
+perfect release*. Design notes before anyone builds it:
 
-**The hard part** is the gather: dribble → two hands → up into the shot must
-be continuous in position and velocity like every other transition. That is
-the invariant most likely to be broken by a naive port.
+- This does **not** require randomness, and should not introduce any. A
+  contest value (0 = wide open, 1 = hand in the face) can shift the *aim
+  point* continuously — a contested green drifts off centre by an amount
+  that grows with the contest — so the outcome stays a deterministic
+  function of (timing, contest, geometry). That keeps the existing
+  decision intact and, more importantly, keeps it replayable across a
+  network: same inputs, same result on every client, which is what a
+  multiplayer build needs. A `Math.random()` in the shot would have to
+  become a seeded, replicated PRNG later; not adding it is cheaper.
+- The hook already exists: `DribbleController.contested` (a bool today,
+  should become 0..1), consumed by `zoneForLayup` and `meterSpec`. It is
+  read but never set, because there is nothing to be contested *by*.
+- So the real prerequisite is **defenders** — even one dummy defender with
+  a position and a reach is enough to compute a contest value (distance to
+  the shooter, whether they are between the shooter and the rim, how high
+  their hand is at the release instant).
+
+The owner chose the park for stage 3 (see the section above). After it,
+candidates in the order that serves the end goal: defenders (unlocks
+contested, and is the thing multiplayer needs anyway); dunks (the layup
+machinery is the base — a dunk is a layup whose release point is above the
+rim and whose "launch" is a slam); or a rebound/chase loop.
+`solveArc()` in `MathUtils.js` is still unused. Reference commit `bb515cf`
+still has the old layup/dunk code (built on the old dribble model; do not
+paste it back).
 
 ## Decisions already made — do not silently reverse
 
@@ -308,3 +654,37 @@ the invariant most likely to be broken by a naive port.
 - **The ball's texture is generated per texel from real seam geometry** (an
   equator, a meridian, two side circles at 55°), not drawn by eye.
 - Cadence emerges from the bounce physics. Do not add a "bounce speed" knob.
+- **Shot outcomes are deterministic by timing zone.** No randomness in the
+  aim: a green is always a swish, iron is always back iron and out, and so
+  on, exactly as the owner specified. Do not add "realistic" random misses.
+  When contested shooting arrives it must stay deterministic too — contest
+  shifts the aim, it does not roll dice (see *Next*). The game is headed
+  for multiplayer, where a deterministic shot is worth a great deal.
+- **The meter timing is LOCKED.** `SHOT.releaseTime` 0.62 s, `meterTime`
+  0.84 s, `green` ±0.03 s. The owner played it and called it perfect —
+  "I missed enough and made enough, so it's fair". Do not retune these,
+  and do not let a later change to the shot timeline shift them by
+  accident. Anything that changes how long the jumper takes changes the
+  difficulty the owner signed off on.
+- **The synthesised sounds are placeholders awaiting recorded assets.** Drop
+  files in `src/assets/audio/`; see the Audio section. Do not polish the
+  synths.
+- **Controls are rebindable; defaults are shoot = K, jump = J** (the
+  owner's own choice after two play-tests; between-the-legs went back to
+  right mouse). Nothing reads physical keys except WASD and the menu. Bump
+  `BINDINGS_VERSION` when defaults change so saved layouts migrate.
+- **Layups are J (takeoff) then a K tap (release), never a hold, and
+  uncontested they always go in — off the backboard, never a swish.**
+  Owner's calls: "by then I'm already on the ground", "jump with J, click
+  K once, make it every time" and "nobody scores layups as a swish, it's
+  always a bank off the backboard" (the last one was misread the first
+  time as a complaint about banking; it was the spec). Timing pressure on
+  a layup only arrives with defenders (the `contested` hook).
+- **Looking at a nearby ball catches it.** Speed does not matter (below 10
+  m/s); the gather absorbs it.
+- **Always right-handed.** The shot gathers into the right hand whichever
+  hand was dribbling.
+- **The body squares up to the basket during a shot** while the head stays
+  free. Turning the camera for the player would be nauseating; letting the
+  ball follow a turned head would make every shot miss.
+- **The shot arc keeps a fixed entry angle (47°), not a fixed apex.**

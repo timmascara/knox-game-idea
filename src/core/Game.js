@@ -11,6 +11,8 @@ import { HUD } from '../ui/HUD.js';
 import { Menu } from '../ui/Menu.js';
 import { Tuning } from '../ui/Tuning.js';
 import { clamp } from './MathUtils.js';
+import { PLAYER } from './Constants.js';
+import { codeLabel } from './Bindings.js';
 
 /**
  * Top-level orchestrator: owns the renderer + scene, constructs every system,
@@ -23,9 +25,12 @@ export class Game {
     this.handAsset = handAsset;
     this.paused = true;
     this.started = false;
-    this._cooldowns = { court: 0, rim: 0, backboard: 0 };
+    this._cooldowns = { court: 0, rim: 0, backboard: 0, net: 0 };
     this._accum = 0;
     this.fixedDt = 1 / 120;
+    // Rapier defaults to a 1/60 step; it must match the loop or free balls
+    // run at double speed.
+    this.physics.setTimestep(this.fixedDt);
 
     this._initRenderer();
     this.scene = new THREE.Scene();
@@ -77,6 +82,7 @@ export class Game {
       ball: this.ball,
       audio: this.audio,
       hud: this.hud,
+      hoops: this.world.hoops,
     });
     // The ball in your hands must never shove the body around.
     this.player.ignoreCollider = (c) => c.handle === this.ball.colliderHandle && this.ball.mode !== BallMode.FREE;
@@ -88,6 +94,8 @@ export class Game {
     this.input = new Input(this.renderer.domElement);
     this.input.sensitivity = this.settings.get('sensitivity');
     this.input.invertY = this.settings.get('invertY');
+    this.input.setBindings(this.settings.get('bindings'));
+    this._refreshHints();
     this.input.onLockChange = (locked) => {
       if (locked) {
         this.input.allowUnlocked = false;
@@ -119,11 +127,12 @@ export class Game {
         const tag = this.physics.tagOf(other);
         if (!tag) return;
         const speed = this.ball.velocity.length();
+        this.dribble.onBallContact(tag, speed);
         if (this._cooldowns[tag] > 0) return;
         this._cooldowns[tag] = 0.08;
         if (tag === 'court') this.audio.bounce(clamp(speed * 0.14, 0.3, 1.4));
-        else if (tag === 'rim') this.audio.rim();
-        else if (tag === 'backboard') this.audio.backboard();
+        else if (tag === 'rim') this.audio.rim(clamp(speed * 0.16, 0.3, 1.3));
+        else if (tag === 'backboard') this.audio.backboard(clamp(speed * 0.16, 0.3, 1.3));
       },
     });
   }
@@ -137,7 +146,7 @@ export class Game {
     this.input.requestLock();
     this.menu.hide();
     this.hud.show();
-    this.hud.setHint('Walk into the ball to pick it up · E to grab');
+    this.hud.setHint(this.dribble.hints.loose);
     // Hosts that refuse pointer lock (an embedded frame): play unlocked.
     setTimeout(() => {
       if (this.started && !this.input.locked && this.paused) {
@@ -161,7 +170,24 @@ export class Game {
     this.menu.showPause();
   }
 
+  /** Hint strings follow the bindings. */
+  _refreshHints() {
+    const b = this.input.bindings;
+    const L = (a) => codeLabel(b[a]);
+    this.dribble.hints = {
+      loose: `Look at the ball to catch it · ${L('pickup')} to grab`,
+      hold: `${L('crossover')}: dribble right · ${L('between')}: dribble left · hold ${L('shoot')} to shoot · ${L('drop')}: drop`,
+      layup: `${L('shoot')} to release`,
+      nearRim: `${L('jump')} to drive · ${L('shoot')} to release`,
+    };
+  }
+
   _applySetting(key, val) {
+    if (key === 'bindings') {
+      this.input.setBindings(val);
+      this._refreshHints();
+      return;
+    }
     if (key === 'sensitivity') this.input.sensitivity = val;
     else if (key === 'invertY') this.input.invertY = val;
     else if (key === 'fov') this.cameraRig.setFov(val);
@@ -208,6 +234,11 @@ export class Game {
     const look = this.input.consumeLook(dt);
     this.cameraRig.applyLook(look.dx, look.dy);
 
+    // Jump: with the ball near the rim it is the layup takeoff; otherwise a
+    // plain hop, any time the body is free (not mid-shot).
+    if (this.input.pressedAction('jump') && !this.player.lockMove && this.player.grounded) {
+      if (!this.dribble.tryLayupTakeoff() && this.player.jump(PLAYER.jumpSpeed)) this.audio.footstep(0.9);
+    }
     this.player.update(dt, this.input, this.cameraRig);
     if (this.player.lastLandImpact > 0) {
       this.cameraRig.triggerLandDip(this.player.lastLandImpact * 0.12);
@@ -227,6 +258,16 @@ export class Game {
     this.dribble.postStep();
 
     this.world.update(dt, this.player.position, this.ball.mesh.position);
+    // The net catches the ball a little on its way through, and sings.
+    const netContacts = this.world.netContacts || 0;
+    if (netContacts > 0) {
+      const speed = this.ball.velocity.length();
+      this.ball.applyNetDrag(dt, netContacts);
+      if (netContacts >= 5 && speed > 1.6 && this._cooldowns.net <= 0) {
+        this._cooldowns.net = 0.6;
+        this.audio.swish(clamp(speed * 0.18, 0.45, 1.25));
+      }
+    }
     this._footsteps(dt);
     this.hud.update(dt, this.dribble, this.player);
   }

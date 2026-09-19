@@ -3,6 +3,7 @@ import { Settings } from './state/Settings.js';
 import { Game } from './core/Game.js';
 import { loadHandAsset } from './player/HandAsset.js';
 import { HAND_POSES } from './player/HandModel.js';
+import { SHOT, DRIBBLE } from './core/Constants.js';
 import * as THREE from 'three';
 
 /**
@@ -36,6 +37,7 @@ async function boot() {
     window.__game = game;
     window.__THREE = THREE; // for the capture / rigging tools
     window.__POSES = HAND_POSES;
+    window.__CONST = { SHOT, DRIBBLE }; // live tunables, for the harnesses
     setProgress(0.9, 'Chalking the lines…');
 
     game.start();

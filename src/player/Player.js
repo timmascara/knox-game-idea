@@ -49,6 +49,11 @@ export class Player {
     // Optional predicate: colliders the character controller must not be
     // blocked by (the ball while it is in your hands).
     this.ignoreCollider = null;
+    // While a shot plays the body is committed: movement input is ignored
+    // and the feet decelerate at `lockDecel` (gentler than a planted stop, so
+    // a moving pull-up keeps some drift; a layup keeps nearly all of it).
+    this.lockMove = false;
+    this.lockDecel = PLAYER.shotDecel;
   }
 
   get position() {
@@ -61,8 +66,8 @@ export class Player {
   }
 
   update(dt, input, cam) {
-    const axis = input.moveAxis();
-    const wantSprint = input.isDown('ShiftLeft') || input.isDown('ShiftRight');
+    const axis = this.lockMove ? { x: 0, z: 0, magnitude: 0 } : input.moveAxis();
+    const wantSprint = !this.lockMove && (input.down('sprint') || input.isDown('ShiftRight'));
     this.sprinting = wantSprint && axis.z > 0.1 && axis.magnitude > 0.1;
 
     // Desired horizontal velocity in world space from camera-relative input.
@@ -79,9 +84,10 @@ export class Player {
     const targetVel = wish.multiplyScalar(wishLen > 0 ? maxSpeed * axis.magnitude : 0);
 
     // Accelerate / decelerate toward target (air control is weaker).
-    const accel = this.grounded
-      ? (targetVel.lengthSq() > this.velocity.lengthSq() ? PLAYER.accel : PLAYER.deaccel)
-      : PLAYER.airAccel;
+    let accel;
+    if (this.lockMove) accel = this.grounded ? this.lockDecel : 0;
+    else if (this.grounded) accel = targetVel.lengthSq() > this.velocity.lengthSq() ? PLAYER.accel : PLAYER.deaccel;
+    else accel = PLAYER.airAccel;
     this.velocity.x = this._approach(this.velocity.x, targetVel.x, accel * dt);
     this.velocity.z = this._approach(this.velocity.z, targetVel.z, accel * dt);
 
@@ -127,6 +133,14 @@ export class Player {
     this.feet.set(next.x, next.y - this.centerOffset, next.z);
     this.planarSpeed = Math.hypot(this.velocity.x, this.velocity.z);
     if (this.planarSpeed > 0.05) this.moveDir.set(this.velocity.x, 0, this.velocity.z).normalize();
+  }
+
+  /** Leave the ground with the given vertical speed (no-op while airborne). */
+  jump(vy) {
+    if (!this.grounded) return false;
+    this.vy = vy;
+    this.grounded = false;
+    return true;
   }
 
   _approach(cur, target, maxDelta) {

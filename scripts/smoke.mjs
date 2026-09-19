@@ -4,10 +4,13 @@
  * Boots the built game in Chromium (WebGL via SwiftShader), verifies it
  * reaches a ready state without console/page errors, then pumps the fixed-step
  * loop to exercise the real dribble engine: pickup, pound dribble, every move,
- * sprinting, dropping and re-gathering. It asserts the physical invariants the
- * feel depends on — the ball never dips under the court, its velocity is
- * continuous across catch/release, the hand is on the ball at every catch,
- * every move hands off to the intended hand and returns to a pound rhythm —
+ * sprinting, dropping and re-gathering, then shooting: a green release from
+ * the hold, a pull-up out of a moving dribble, and early / late releases. It
+ * asserts the physical invariants the feel depends on — the ball never dips
+ * under the court, its velocity is continuous across catch/release and
+ * through the whole jumper, the hand is on the ball at every catch and
+ * through the shot, every move hands off to the intended hand and returns to
+ * a pound rhythm, a green release swishes and off-timing lands in its zone —
  * and that nothing goes non-finite.
  *
  * Usage:
@@ -71,16 +74,16 @@ const result = await page.evaluate(() => {
         if (![p.x, p.y, p.z].every(Number.isFinite)) fails.push('ball position non-finite');
         const f = g.player.position;
         if (prevPos) {
-          // Ball displacement relative to the body, so running doesn't count.
-          const step = Math.hypot(p.x - prevPos.x - (f.x - prevFeet.x), p.y - prevPos.y, p.z - prevPos.z - (f.z - prevFeet.z));
+          // Ball displacement relative to the body, so running (or the shot's hop) doesn't count.
+          const step = Math.hypot(p.x - prevPos.x - (f.x - prevFeet.x), p.y - prevPos.y - (f.y - prevFeet.y), p.z - prevPos.z - (f.z - prevFeet.z));
           if (step > maxStep) { maxStep = step; window.__stepAt = { state: d.state, plan: d.plan?.name, t: d.t, phase: window.__phase, local: [d.ballLocal.x, d.ballLocal.y, d.ballLocal.z], prevLocal: window.__prevLocal, flight: d.flight && { t1: d.flight.t1, T: d.flight.T, A: d.flight.A.toArray(), B: d.flight.B.toArray(), vh: [d.flight.vh.x, d.flight.vh.y] } }; }
         }
         if (d.stats.maxHandGap > (window.__gapMax || 0)) { window.__gapMax = d.stats.maxHandGap; window.__gapAt = { state: d.state, plan: d.plan?.name, t: d.t, phase: window.__phase }; }
         if (p.y - R < minY + 1e-9 && p.y - R < 0) window.__minAt = { state: d.state, plan: d.plan?.name, t: d.t, phase: window.__phase };
         prevPos = { x: p.x, y: p.y, z: p.z };
         window.__prevLocal = [d.ballLocal.x, d.ballLocal.y, d.ballLocal.z];
-        prevFeet = { x: f.x, z: f.z };
-        if (d.dribbling) {
+        prevFeet = { x: f.x, y: f.y, z: f.z };
+        if (d.dribbling || d.shooting) {
           const v = d.ballVelLocal;
           const bounced = d.stats.bounces !== prevBounces;
           prevBounces = d.stats.bounces;
@@ -115,13 +118,19 @@ const result = await page.evaluate(() => {
   check(catches >= 6 && catches <= 10, `pound cadence off: ${catches} catches in 5 s`);
 
   // 3) Every move hands off to the right hand and returns to a pound.
+  // Each move's input comes from the live binding map, so a default change
+  // cannot silently turn a move test into a no-op.
+  const keyFor = (action) => {
+    const c = g.input.bindings[action];
+    return c === 'Mouse0' ? 'left' : c === 'Mouse2' ? 'right' : c;
+  };
   const moves = [
-    ['crossover', 'left', -1],
-    ['between', 'right', 1],
-    ['behind', 'KeyQ', -1],
-    ['inout', 'KeyF', -1],
-    ['hesitation', 'Space', -1],
-    ['stepback', 'left', 1, ['KeyS']],
+    ['crossover', keyFor('crossover'), -1],
+    ['between', keyFor('between'), 1],
+    ['behind', keyFor('behind'), -1],
+    ['inout', keyFor('inout'), -1],
+    ['hesitation', keyFor('hesitation'), -1],
+    ['stepback', keyFor('crossover'), 1, ['KeyS']],
   ];
   const handoffs = [];
   for (const [name, key, expectSign, hold] of moves) {
@@ -183,6 +192,187 @@ const result = await page.evaluate(() => {
   }
   check(d.hasBall, `did not re-gather the ball (state ${d.state})`);
 
+  // 8) Shooting. Hold Space, let go `release` seconds into the shot, then run
+  //    until the flight is decided. Continuity is measured by the same tick
+  //    monitor through gather, set, rise and flick.
+  const SHOOT = g.input.bindings.shoot;
+  const shoot = (release, keys = []) => {
+    g.input.pressed.add(SHOOT);
+    tick(1, [SHOOT, ...keys]);
+    let guard = 0;
+    while (d.state !== 'loose' && guard++ < 400) {
+      const holding = d.shot && d.shot.t < release - 1e-6;
+      if (!holding && g.input.keys.has(SHOOT)) { g.input.keys.delete(SHOOT); g.input.released.add(SHOOT); }
+      tick(1, holding ? [SHOOT, ...keys] : keys);
+    }
+    check(d.state === 'loose', `shot never released (state ${d.state})`);
+    for (let i = 0; i < 900 && d.tracker; i++) tick(1);
+    check(!d.tracker, 'shot never resolved');
+    return d.lastShot;
+  };
+  const faceHoop = (x, z) => {
+    g.player.teleport({ x, y: 0.02, z });
+    g.player.velocity.set(0, 0, 0);
+    g.cameraRig.yaw = Math.atan2(-(0 - x), -(12.425 - z));
+    g.cameraRig.pitch = 0.1;
+    g.cameraRig.applyLook(0, 0);
+    // A teleport is not ball motion: snap the handle frame to the new spot.
+    d._updateFrame(0, true);
+    prevPos = null; prevFeet = null; prevVel = null;
+  };
+  const shots = [];
+  window.__phase = 'shoot-green';
+  // a) From the hold at the top of the key: green → swish.
+  while (d.state !== 'hold' && d.state !== 'loose') { press('KeyE'); tick(1); tick(30); }
+  check(d.state === 'hold', `expected hold before shooting, got ${d.state}`);
+  faceHoop(0, 6.5);
+  tick(30);
+  let ls = shoot(0.62);
+  shots.push(`${ls?.zone}:${ls?.result}`);
+  check(ls?.zone === 'green' && ls?.result === 'swish', `green release should swish, got ${ls?.zone}:${ls?.result}`);
+  check(d.stats.maxReleaseJump < 0.5, `release velocity mismatch ${d.stats.maxReleaseJump.toFixed(2)} m/s`);
+  // The net catches the ball: a made shot drops out and settles under the rim.
+  tick(600);
+  const rimXZ = { x: 0, z: 12.425 };
+  const settled = g.ball.position;
+  const settleDist = Math.hypot(settled.x - rimXZ.x, settled.z - rimXZ.z);
+  const settleSpeed = g.ball.velocity.length();
+  check(settleDist < 1.5 && settleSpeed < 0.3, `made ball should settle under the rim (${settleDist.toFixed(2)} m away, ${settleSpeed.toFixed(2)} m/s)`);
+
+  window.__phase = 'shoot-pullup';
+  // b) Pull-up out of a moving dribble, running in from the wing, still green.
+  faceHoop(6.0, 1.5);
+  g.ball.setControlled(); d.state = 'hold'; d.plan = null; d.flight = null; d.contact = null; d._ft = null; d.tracker = null;
+  d._updateFrame(0, true); d.ballLocal.set(0, 1.14, 0.40); d.ballVelLocal.set(0, 0, 0);
+  tick(20);
+  tick(1, [], 'left');
+  tick(150, ['KeyW']);
+  check(d.dribbling && g.player.planarSpeed > 2, `expected a moving dribble before the pull-up (${d.state}, ${g.player.planarSpeed.toFixed(1)} m/s)`);
+  const pullupDist = Math.hypot(g.player.position.x, g.player.position.z - 12.425);
+  check(pullupDist > 3.5, `pull-up too close to the rim (${pullupDist.toFixed(1)} m)`);
+  ls = shoot(0.62, ['KeyW']);
+  shots.push(`${ls?.zone}:${ls?.result}`);
+  check(ls?.zone === 'green' && (ls?.result === 'swish' || ls?.result === 'made'), `pull-up should go in, got ${ls?.zone}:${ls?.result}`);
+
+  // c) Off timing lands in its zone: late → glass, very early → airball, a touch late → back iron.
+  for (const [release, zone, phase] of [[0.73, 'glass', 'shoot-glass'], [0.40, 'air', 'shoot-air'], [0.67, 'iron', 'shoot-iron']]) {
+    window.__phase = phase;
+    faceHoop(-2.5, 7.5);
+    g.ball.setControlled(); d.state = 'hold'; d.plan = null; d.flight = null; d.contact = null; d._ft = null; d.tracker = null;
+    d._updateFrame(0, true); d.ballLocal.set(0, 1.14, 0.40); d.ballVelLocal.set(0, 0, 0);
+    tick(20);
+    ls = shoot(release);
+    shots.push(`${ls?.zone}:${ls?.result}`);
+    check(ls?.zone === zone && ls?.result === zone, `release at ${release}s should be ${zone}, got ${ls?.zone}:${ls?.result}`);
+  }
+  check(d.stats.maxReleaseJump < 0.5, `release velocity mismatch ${d.stats.maxReleaseJump.toFixed(2)} m/s`);
+  check(g.player.grounded && !g.player.lockMove, 'player still locked after the shot');
+
+  // 9) Layups: J then K. Drive in from the free-throw line; inside layupRange
+  //    the jump key is the takeoff and a tap of the shoot key releases. A tap
+  //    near the top of the jump goes; a late one catches the front iron; no
+  //    tap at all lands holding the ball.
+  const JUMP = g.input.bindings.jump;
+  const driveIn = (sprint = false) => {
+    faceHoop(1.2, sprint ? 5.5 : 7.8);
+    g.ball.setControlled(); d.state = 'hold'; d.plan = null; d.flight = null; d.contact = null; d._ft = null; d.tracker = null;
+    d._updateFrame(0, true); d.ballLocal.set(0, 1.14, 0.40); d.ballVelLocal.set(0, 0, 0);
+    tick(20);
+    tick(1, [], 'left');
+    const run = sprint ? ['KeyW', 'ShiftLeft'] : ['KeyW'];
+    let guard = 0;
+    while (guard++ < 400 && Math.hypot(g.player.position.x, g.player.position.z - 12.425) > 2.3) tick(1, run);
+    check(d.dribbling, `expected to still be dribbling on the drive (${d.state})`);
+    if (sprint) check(g.player.planarSpeed > 5, `expected a sprint into the layup (${g.player.planarSpeed.toFixed(1)} m/s)`);
+  };
+  const layup = (tapAt) => {
+    const hoopDist0 = Math.hypot(g.player.position.x, g.player.position.z - 12.425);
+    g.input.pressed.add(JUMP);
+    tick(1, ['KeyW', JUMP]);
+    window.__layupFrom = hoopDist0;
+    check(d.state === 'shot' && d.shot?.kind === 'layup', `jump near the rim should take off into a layup (${d.state}/${d.shot?.kind})`);
+    check(!g.player.grounded, 'layup takeoff should leave the floor at once');
+    let guard = 0;
+    while (d.state === 'shot' && d.shot.t < tapAt - 1e-6 && guard++ < 400) tick(1, ['KeyW']);
+    if (tapAt !== null && d.state === 'shot') { g.input.pressed.add(SHOOT); tick(1, ['KeyW', SHOOT]); }
+    guard = 0;
+    while (d.state !== 'loose' && d.state !== 'hold' && guard++ < 400) tick(1, ['KeyW']);
+    for (let i = 0; i < 900 && d.tracker; i++) tick(1);
+    return d.lastShot;
+  };
+  // Uncontested, every tap while airborne goes in: J then K at once (the
+  // release is held until the top of the jump), at the top, and late on the
+  // way down — from a run and from a sprint.
+  const layupIdeal = window.__CONST.SHOT.layupJumpSpeed / 18 + window.__CONST.SHOT.layupReleaseAfterApex;
+  for (const [tapAt, phase, sprint] of [[0.01, 'layup-quick', false], [layupIdeal, 'layup', false], [layupIdeal + 0.14, 'layup-late', false], [0.02, 'layup-sprint', true]]) {
+    window.__phase = phase;
+    driveIn(sprint);
+    const before = d.stats.shots.length;
+    ls = layup(tapAt);
+    shots.push(`${ls?.kind}:${ls?.zone}:${ls?.result}`);
+    check(d.stats.shots.length === before + 1 && ls?.kind === 'layup', `expected one layup, got ${ls?.kind}`);
+    check(ls?.result === 'made' && ls?.boardHits > 0, `layup tapped at ${tapAt}s (${phase}) should go in off the glass, got ${ls?.zone}:${ls?.result} (board hits ${ls?.boardHits})`);
+    for (let i = 0; i < 300 && !g.player.grounded; i++) tick(1);
+  }
+  window.__phase = 'layup-notap';
+  driveIn();
+  const shotsBefore = d.stats.shots.length;
+  layup(null);
+  for (let i = 0; i < 120 && d.state === 'gather'; i++) tick(1);
+  check(d.state === 'hold' && d.stats.shots.length === shotsBefore, `landing without a tap should come down holding the ball (${d.state}, shots ${d.stats.shots.length - shotsBefore})`);
+
+  // 10b) Catching a rebound by looking at it: shoot a back-iron miss, turn to
+  //      face the ball as it comes off, and it is caught even though it is
+  //      moving fast — no walking into it, no key.
+  window.__phase = 'look-catch';
+  faceHoop(0, 8.5);
+  g.ball.setControlled(); d.state = 'hold'; d.plan = null; d.flight = null; d.contact = null; d._ft = null; d.tracker = null;
+  d._updateFrame(0, true); d.ballLocal.set(0, 1.14, 0.40); d.ballVelLocal.set(0, 0, 0);
+  tick(20);
+  ls = shoot(0.67);
+  check(ls?.zone === 'iron', `expected a back-iron miss to rebound, got ${ls?.zone}`);
+  let caughtSpeed = null;
+  for (let i = 0; i < 900 && !d.hasBall; i++) {
+    const b = g.ball.position; const e = g.player.eyePosition;
+    g.cameraRig.yaw = Math.atan2(-(b.x - e.x), -(b.z - e.z));
+    g.cameraRig.pitch = Math.atan2(b.y - e.y, Math.hypot(b.x - e.x, b.z - e.z));
+    g.cameraRig.applyLook(0, 0);
+    const speedBefore = g.ball.velocity.length();
+    tick(1);
+    if (d.hasBall && caughtSpeed === null) caughtSpeed = speedBefore;
+  }
+  check(d.hasBall, 'looking at the rebound should catch it');
+  check(caughtSpeed !== null && caughtSpeed > 1.0, `expected to catch a moving ball, it was doing ${caughtSpeed?.toFixed(2)} m/s`);
+  for (let i = 0; i < 120 && d.state === 'gather'; i++) tick(1);
+  check(d.state === 'hold', `caught ball should settle into the hold (${d.state})`);
+
+  // 10c) Hands ride the body: a hop while holding lifts the ball and both hands.
+  window.__phase = 'hold-hop';
+  const ballY0 = d.ballWorld.y; const handY0 = g.hands.right.pos.y;
+  g.input.pressed.add(g.input.bindings.jump);
+  tick(1, [g.input.bindings.jump]);
+  tick(14);
+  check(!g.player.grounded, 'hop while holding should leave the floor');
+  check(d.ballWorld.y - ballY0 > 0.15 && g.hands.right.pos.y - handY0 > 0.1, `held ball and hands should rise with the body (ball +${(d.ballWorld.y - ballY0).toFixed(2)}, hand +${(g.hands.right.pos.y - handY0).toFixed(2)})`);
+  while (!g.player.grounded) tick(1);
+  press(g.input.bindings.drop); tick(1);
+
+  // 10) A plain jump while moving, without shooting.
+  window.__phase = 'jump';
+  faceHoop(0, 4);
+  g.ball.setFree(); g.ball.setPositionHard({ x: 6, y: 0.2, z: -6 }); d.state = 'loose'; d._ft = null; d.tracker = null;
+  tick(30, ['KeyW']);
+  const restY0 = g.hands.left.pos.y;
+  g.input.pressed.add(g.input.bindings.jump);
+  tick(1, ['KeyW', g.input.bindings.jump]);
+  tick(14, ['KeyW']);
+  check(!g.player.grounded && g.player.vy > 0.5, `jump did not leave the ground (vy ${g.player.vy.toFixed(2)})`);
+  check(d.state === 'loose', `a plain jump must not shoot (${d.state})`);
+  check(g.hands.left.pos.y - restY0 > 0.1, `empty hands should rise with the body (+${(g.hands.left.pos.y - restY0).toFixed(2)})`);
+  let airTicks = 0;
+  while (!g.player.grounded && airTicks++ < 300) tick(1, ['KeyW']);
+  check(g.player.grounded, 'never landed from the jump');
+
   // Invariants.
   check(minY > -0.01, `ball went under the court by ${(-minY).toFixed(3)} m`);
   check(maxJump < 3.0, `ball velocity discontinuity: ${maxJump.toFixed(2)} m/s in one tick`);
@@ -202,6 +392,8 @@ const result = await page.evaluate(() => {
     maxHandGap: d.stats.maxHandGap,
     handoffs,
     combo: labels,
+    shots,
+    maxReleaseJump: d.stats.maxReleaseJump,
     stepAt: window.__stepAt,
     jumpAt: window.__jumpAt,
     gapAt: window.__gapAt,

@@ -218,6 +218,22 @@ export class Basketball {
     this.body.setLinvel({ x: v.x * decay, y: v.y, z: v.z * decay }, true);
   }
 
+  /**
+   * The net slows a ball on its way through. `contacts` is how many net
+   * nodes the ball is pushing this step; a swish touches ten or more.
+   */
+  applyNetDrag(dt, contacts) {
+    if (this.mode !== BallMode.FREE || contacts <= 0) return;
+    const s = Math.min(1, contacts / 6);
+    const fh = Math.exp(-BALL.netDragHorizontal * s * dt);
+    const fv = Math.exp(-BALL.netDragVertical * s * dt);
+    const v = this.body.linvel();
+    this.body.setLinvel({ x: v.x * fh, y: v.y * fv, z: v.z * fh }, true);
+    const w = this.body.angvel();
+    const fw = Math.exp(-10 * s * dt);
+    this.body.setAngvel({ x: w.x * fw, y: w.y * fw, z: w.z * fw }, true);
+  }
+
   /** Sync the render mesh from physics (FREE mode). */
   syncMesh() {
     const t = this.body.translation();

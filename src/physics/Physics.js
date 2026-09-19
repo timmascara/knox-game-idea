@@ -14,10 +14,27 @@ export class Physics {
     this.world = new RAPIER.World({ x: 0, y: GRAVITY, z: 0 });
     // A modest solver iteration count keeps the rim rattle stable.
     this.world.integrationParameters.numSolverIterations = 8;
+    // Contacts are only predicted 0.5 mm ahead, not Rapier's default 2 mm.
+    // With the default, a step that ends with the ball 0.5-2 mm short of a
+    // surface creates a "predicted" contact that stops the ball dead at the
+    // surface without bouncing it, and the next step bounces the near-zero
+    // remainder: measured restitution 0.23-0.42 instead of 0.72 for about
+    // one contact phase in five, on every surface. It cost one bank layup in
+    // eight. Penetration of a few mm before the real bounce is corrected
+    // positionally and does not change the bounce velocity (verified).
+    this.world.integrationParameters.normalizedPredictionDistance = 0.0005;
     this.eventQueue = new RAPIER.EventQueue(true);
     this.RAPIER = RAPIER;
     this._contactListeners = [];
     this._tags = new Map(); // collider handle -> string tag
+  }
+
+  /**
+   * Rapier's world defaults to a 1/60 s step. The game steps it at its own
+   * fixed rate, so the two must agree or every free ball runs fast.
+   */
+  setTimestep(dt) {
+    this.world.timestep = dt;
   }
 
   /** Associate a semantic tag with a collider handle (for collision audio). */

@@ -1,4 +1,4 @@
-import { DRIBBLE } from '../core/Constants.js';
+import { DRIBBLE, SHOT } from '../core/Constants.js';
 
 /**
  * Live tuning panel (Tab). Every slider writes straight into the DRIBBLE
@@ -29,26 +29,46 @@ const FIELDS = [
   ['swayRoll', 'Body sway (roll)', 0, 0.08, 0.002],
 ];
 
+const SHOT_FIELDS = [
+  ['releaseTime', 'Ideal release (s)', 0.4, 0.9, 0.01],
+  ['green', 'Green window (±s)', 0.01, 0.08, 0.005],
+  ['iron', 'Back-iron window (±s)', 0.04, 0.15, 0.005],
+  ['glass', 'Glass window (±s)', 0.08, 0.25, 0.005],
+  ['entryAngle', 'Entry angle (°)', 40, 55, 0.5],
+  ['jumpSpeed', 'Hop speed (m/s)', 2.0, 4.5, 0.1],
+  ['backspin', 'Backspin (rad/s)', 0, 25, 0.5],
+];
+
 export class Tuning {
   constructor() {
     this.root = document.createElement('div');
     this.root.id = 'tuning';
     this.root.innerHTML = `<div class="tuning-title">DRIBBLE TUNING <span>Tab to close</span></div>`;
-    for (const [key, label, min, max, step] of FIELDS) {
+    this._rows(FIELDS, DRIBBLE);
+    const title = document.createElement('div');
+    title.className = 'tuning-title';
+    title.style.marginTop = '10px';
+    title.textContent = 'SHOT TUNING';
+    this.root.appendChild(title);
+    this._rows(SHOT_FIELDS, SHOT);
+    document.body.appendChild(this.root);
+    this.visible = false;
+    this.hide();
+  }
+
+  _rows(fields, target) {
+    for (const [key, label, min, max, step] of fields) {
       const row = document.createElement('label');
       row.className = 'tuning-row';
-      row.innerHTML = `<span>${label}</span><input type="range" min="${min}" max="${max}" step="${step}" value="${DRIBBLE[key]}"><b>${DRIBBLE[key]}</b>`;
+      row.innerHTML = `<span>${label}</span><input type="range" min="${min}" max="${max}" step="${step}" value="${target[key]}"><b>${target[key]}</b>`;
       const input = row.querySelector('input');
       const val = row.querySelector('b');
       input.oninput = () => {
-        DRIBBLE[key] = parseFloat(input.value);
+        target[key] = parseFloat(input.value);
         val.textContent = input.value;
       };
       this.root.appendChild(row);
     }
-    document.body.appendChild(this.root);
-    this.visible = false;
-    this.hide();
   }
 
   toggle() {
