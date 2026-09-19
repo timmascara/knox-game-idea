@@ -42,11 +42,52 @@ npm run build && npm run preview   # production build on :4173
 npm run test:smoke             # headless test — run this before every push
 node scripts/capture.mjs all   # contact sheets of every move → screenshots/
 node scripts/capture.mjs poses # the rigged hand in each pose, close up
+npm run assets                 # assets_raw/<name>/ → src/assets/<name>.glb
 ```
 
 `smoke.mjs` and `capture.mjs` both need `npm run preview` serving on :4173.
 There is no GPU here; both run headless Chromium with SwiftShader, and
 `capture.mjs` is how you review animation without being able to play it.
+
+## Bringing in art — the asset pipeline
+
+The owner is **not an artist**: the models are packs downloaded from the
+internet, arriving as loose files (a `.fbx`/`.obj` mesh, a `.mtl` sidecar, a
+folder of textures, sometimes animations in their own files). Do not send them
+Blender instructions — they do not use it and do not want to.
+
+The flow is: they push the raw download into `assets_raw/<model_name>/`, and
+`npm run assets` turns each folder into one self-contained
+`src/assets/<model_name>.glb`. See `assets_raw/README.md` for the rules that
+matter (keep the download's folder structure, include the `.mtl`, one model
+per folder). Two stages, because neither tool does the whole job:
+
+1. **assimp** reads the source format and writes glTF. It leaves textures as
+   *external file references* — the output is not self-contained.
+2. **gltf-transform** resolves those references, re-encodes the textures to
+   WebP, Draco-compresses the geometry and embeds everything into one binary.
+
+Measured on the real hand asset through this pipeline: **1.72 MB → 101.9 KB,
+94% smaller**, textures embedded.
+
+**Tooling notes that cost time to find:**
+
+- `assimp` is **not preinstalled** in the sandbox. `apt-get install
+  assimp-utils` 404s until you run `apt-get update` first. Neither Blender nor
+  trimesh is available; assimp is the only thing here that reads `.fbx`.
+- `gltf-transform` comes from `npx --yes @gltf-transform/cli@latest` and works
+  offline of any install step.
+- **The interim glTF must be written beside its own source.** assimp emits
+  texture references relative to the file it writes, so staging it in a temp
+  directory breaks every texture link and the optimize step fails with a bare
+  non-zero exit. This was a real bug in the first version of the script.
+- Toy inputs get *bigger* through the pipeline (fixed Draco/WebP/JSON
+  overhead). Only judge the ratio on real assets.
+
+**Not solved: animations shipped in separate files** (the Mixamo pattern —
+mesh in one file, each clip in its own). The script converts the mesh file and
+ignores the rest. Merging clips onto one skeleton needs the rigs to match and
+is fragile. Nobody has tried it here yet.
 
 ## Invariants — the smoke test enforces these
 
@@ -164,6 +205,43 @@ there.
 at `bb515cf`, kept only as reference for the shooting stage. If you open a
 session and the code looks like a park with grass, trees and a shot meter,
 you are on the wrong branch.
+
+## The owner's actual goal: a park, not a bare court
+
+Recorded 2026-09-19 after the owner pushed back on a session that had claimed
+the visuals were fine. **They are not.** Rendered from the current build at
+eye level, the game is a grey slab, a flat khaki band, three flat hills and a
+stick with a rectangle on it. It is a greybox.
+
+What the owner wants: **a park basketball court — trees, grass, birds
+chirping, kids playing in the distance.** They have not raised it before now
+only because the handle had to come first.
+
+Do not repeat this session's mistake of arguing that the world is
+"procedural, therefore fine". The court, hoop and ball being generated in code
+is a sound decision; the world being *empty* is the problem, and no material
+or lighting pass fixes an empty world. Note also that the court is a
+full NBA two-hoop layout, which is the wrong court for a park.
+
+Infrastructure that does **not** exist yet and is needed before any of this
+lands (all verified absent by grep):
+
+- **No `LoadingManager`.** One hardcoded GLB import is the entire asset system.
+- **No `InstancedMesh`.** Trees and grass cannot be placed as individual meshes.
+- **No `LOD` or `Sprite`.** Nothing for distant kids as billboard imposters.
+- **No environment map** anywhere — `scene.environment` is never set, so every
+  `MeshStandardMaterial` is running PBR with no IBL. Cheap, large win.
+- **Audio is 100% synthesized oscillators** (`AudioManager.js`), with no file
+  loading at all. Bird and park ambience need a sample loader that does not
+  exist.
+
+Budget for the whole park, over GitHub Pages: **8–12 MB** of assets is
+realistic and enough. The JS bundle is already 5.3 MB (2.0 MB gzipped). Note
+`assetsInlineLimit` is 4 MB in `vite.config.js` — at park scale the single-file
+artifact build stops being viable and the Pages build becomes the only target.
+
+**Open question for the owner:** whether the park comes before or after
+shooting. They have not said, and the sequencing is theirs to choose.
 
 ## Next stage: shooting
 
