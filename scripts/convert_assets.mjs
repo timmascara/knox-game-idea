@@ -9,15 +9,23 @@
  *   npm run assets              # convert every folder
  *   npm run assets -- tree_oak  # convert just one
  *
- * Two stages, because neither tool does the whole job:
- *   1. assimp  — reads the source format, writes glTF. Leaves textures as
+ * Five stages, because no one tool does the whole job:
+ *   0. unpack — texture sets ship as .zip/.7z beside the mesh; extract them
+ *                so the .mtl's relative paths resolve.
+ *   1. prep_textures.py — normalise what glTF cannot express: .tif/.tga
+ *                textures, cut-out alpha in its own file, a `mtllib` naming a
+ *                file that download sites renamed, an unreferenced albedo.
+ *   2. assimp  — reads the source format, writes glTF. Leaves textures as
  *                external file references.
- *   2. gltf-transform — resolves those references, recompresses the textures
- *                to WebP, Draco-compresses the geometry, and embeds
- *                everything into a single binary.
+ *   3. fix_materials.mjs — puts back what assimp's glTF writer drops: cut-out
+ *                alpha, double-sidedness, normal and roughness maps. Runs on
+ *                the uncompressed interim so nothing has to be decoded.
+ *   4. gltf-transform — resolves the texture references, recompresses to
+ *                WebP, Draco-compresses the geometry, and embeds everything
+ *                into a single binary.
  *
- * Needs `assimp` on PATH (apt install assimp-utils). gltf-transform is
- * fetched by npx on demand.
+ * Needs `assimp` and `7z` on PATH (apt install assimp-utils p7zip-full) and
+ * python3 with pillow. gltf-transform is fetched by npx on demand.
  */
 import { execFileSync } from 'node:child_process';
 import { readdirSync, statSync, mkdirSync, rmSync, existsSync } from 'node:fs';
@@ -29,6 +37,10 @@ const OUT = 'src/assets';
 // directory: assimp emits texture references as paths relative to the file it
 // writes, so moving it elsewhere breaks every one of them.
 const INTERIM = '__interim.gltf';
+// fix_materials rewrites the interim as a self-contained .glb, so the
+// external buffers and textures assimp emitted alongside it are cleaned up
+// rather than left in the source folder.
+const INTERIM_FIXED = '__interim.glb';
 
 // Preferred in order: an existing glTF needs no conversion at all.
 const MESH_EXT = ['.gltf', '.glb', '.fbx', '.obj', '.dae', '.blend', '.3ds', '.ply', '.stl'];
@@ -65,6 +77,15 @@ function dirSize(dir) {
   return n;
 }
 
+/** Remove every file the interim conversion dropped in the source folder. */
+function cleanInterim(dir) {
+  for (const f of readdirSync(dir)) {
+    if (f.startsWith('__interim.') || /^(normal|metallicRoughness|baseColor|emissive|occlusion)_\d+\.(png|jpe?g)$/.test(f)) {
+      rmSync(join(dir, f), { force: true });
+    }
+  }
+}
+
 const only = process.argv.slice(2);
 if (!existsSync(RAW)) { console.error(`no ${RAW}/ — nothing to convert`); process.exit(0); }
 
@@ -82,27 +103,51 @@ for (const name of folders) {
   const mesh = findMesh(dir);
   if (!mesh) { console.error(`✗ ${name}: no mesh file found (looked for ${MESH_EXT.join(' ')})`); failed++; continue; }
 
-  const before = dirSize(dir);
+  const before = dirSize(dir);   // measured after unpacking, below
   const interim = join(dir, INTERIM);
+  const fixed = join(dir, INTERIM_FIXED);
   const out = join(OUT, `${name}.glb`);
 
   try {
-    // Stage 1 — into glTF. A .glb/.gltf source skips this and goes straight
+    // Stage 0 — unpack any texture archives sitting beside the mesh.
+    for (const f of readdirSync(dir)) {
+      if (!/\.(zip|7z)$/i.test(f)) continue;
+      execFileSync('7z', ['x', join(dir, f), `-o${dir}`, '-y'], { stdio: 'pipe' });
+    }
+
+    // Stage 1 — normalise textures and repair the .mtl before assimp sees it.
+    const prep = execFileSync('python3', ['scripts/prep_textures.py', dir], { stdio: 'pipe' }).toString().trim();
+    for (const l of prep.split('\n').slice(1)) if (l.trim()) console.log(`  ${l.trim()}`);
+
+    // Stage 2 — into glTF. A .glb/.gltf source skips this and goes straight
     // to the optimizer, which reads it natively.
     const src = ['.glb', '.gltf'].includes(extname(mesh).toLowerCase()) ? mesh : interim;
     if (src === interim) execFileSync('assimp', ['export', mesh, interim], { stdio: 'pipe' });
 
-    // Stage 2 — resolve external textures, compress, embed into one binary.
-    execFileSync('npx', ['--yes', '@gltf-transform/cli@latest', 'optimize', src, out,
+    // Stage 3 — repair the materials assimp could not translate. Only
+    // meaningful for formats with a separate material file; harmless
+    // otherwise, since it no-ops when it finds no .mtl.
+    let optimizeFrom = src;
+    if (src === interim) {
+      const fix = execFileSync('node', ['scripts/fix_materials.mjs', interim, dir, fixed], { stdio: 'pipe' });
+      const msg = fix.toString().trim();
+      if (msg && !msg.startsWith('no material')) {
+        for (const l of msg.split('\n').slice(1)) console.log(`  ${l.trim()}`);
+      }
+      if (existsSync(fixed)) optimizeFrom = fixed;
+    }
+
+    // Stage 4 — resolve external textures, compress, embed into one binary.
+    execFileSync('npx', ['--yes', '@gltf-transform/cli@latest', 'optimize', optimizeFrom, out,
       '--compress', 'draco', '--texture-compress', 'webp', '--texture-size', '2048'],
       { stdio: 'pipe' });
 
-    rmSync(interim, { force: true });
+    cleanInterim(dir);
     const after = statSync(out).size;
     const pct = ((1 - after / before) * 100).toFixed(0);
     console.log(`✓ ${name.padEnd(20)} ${basename(mesh).padEnd(28)} ${kb(before)} → ${kb(after)}  (${pct}% smaller)`);
   } catch (e) {
-    rmSync(interim, { force: true });
+    cleanInterim(dir);
     console.error(`✗ ${name}: ${(e.stderr?.toString() || e.message).trim().split('\n').slice(-3).join('\n   ')}`);
     failed++;
   }

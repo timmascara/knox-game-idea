@@ -43,6 +43,7 @@ npm run test:smoke             # headless test — run this before every push
 node scripts/capture.mjs all   # contact sheets of every move → screenshots/
 node scripts/capture.mjs poses # the rigged hand in each pose, close up
 npm run assets                 # assets_raw/<name>/ → src/assets/<name>.glb
+npm run assets:preview -- tree # screenshot a converted asset on its own
 ```
 
 `smoke.mjs` and `capture.mjs` both need `npm run preview` serving on :4173.
@@ -52,42 +53,68 @@ There is no GPU here; both run headless Chromium with SwiftShader, and
 ## Bringing in art — the asset pipeline
 
 The owner is **not an artist**: the models are packs downloaded from the
-internet, arriving as loose files (a `.fbx`/`.obj` mesh, a `.mtl` sidecar, a
-folder of textures, sometimes animations in their own files). Do not send them
-Blender instructions — they do not use it and do not want to.
+internet. Do not send them Blender instructions — they do not use it and do
+not want to. They also cannot upload large files through chat, so the route
+is: they push the raw download to GitHub, a session converts it here. Give
+them a named list of files to upload, not a process to follow.
 
-The flow is: they push the raw download into `assets_raw/<model_name>/`, and
-`npm run assets` turns each folder into one self-contained
-`src/assets/<model_name>.glb`. See `assets_raw/README.md` for the rules that
-matter (keep the download's folder structure, include the `.mtl`, one model
-per folder). Two stages, because neither tool does the whole job:
+They drop a download into `assets_raw/<model_name>/` and `npm run assets`
+produces one self-contained `src/assets/<model_name>.glb`. Five stages, each
+earned by a failure hit converting the first tree — see
+`assets_raw/README.md`:
 
-1. **assimp** reads the source format and writes glTF. It leaves textures as
-   *external file references* — the output is not self-contained.
-2. **gltf-transform** resolves those references, re-encodes the textures to
-   WebP, Draco-compresses the geometry and embeds everything into one binary.
+0. **unpack** `.zip`/`.7z` sitting beside the mesh
+1. **`scripts/prep_textures.py`** — normalise what glTF cannot express
+2. **`assimp`** — source format → glTF
+3. **`scripts/fix_materials.mjs`** — restore what assimp's writer drops
+4. **`gltf-transform`** — WebP textures, Draco geometry, one binary
 
-Measured on the real hand asset through this pipeline: **1.72 MB → 101.9 KB,
-94% smaller**, textures embedded.
+**Stages 1 and 3 are not optional polish.** Without them a conversion
+*succeeds* and renders wrong:
+
+- glTF permits PNG/JPEG only; packs ship `.tif` and 16-bit height maps.
+- OBJ keeps cut-out alpha in its own file (`map_d`); glTF wants it in the
+  albedo's alpha. Unfixed, **every leaf is a solid rectangle**.
+- Download sites rewrite spaces in filenames, so `mtllib tree lowpoly.mtl`
+  arrives as `tree+lowpoly.mtl` and the mesh silently loses all materials.
+- Packs wire up normal/roughness and leave `map_Kd` out, giving a flat grey
+  trunk next to a perfectly good bark texture.
+- assimp drops `alphaMode`, `doubleSided`, normalTexture and
+  metallicRoughnessTexture whatever the `.mtl` said. glTF also packs
+  roughness in a metallicRoughness texture's **G channel**, so a loose
+  greyscale roughness map has to be rechannelled, not attached.
+
+**Always render before believing a conversion.** `npm run assets:preview --
+<name>` (needs `npm run dev -- --port 5180`) writes
+`screenshots/asset_<name>_*.png` and prints world bounds. Size reduction says
+nothing about whether it looks right. It also catches the scale surprise:
+**packs are modelled at any scale, and a file called "tree" is often a
+grove** — the first one converted here is nine trees spanning 46 m.
+
+Measured end to end on the first real pack: **24.5 MB → 1.06 MB, 96%
+smaller**, textures embedded, leaves masking correctly.
 
 **Tooling notes that cost time to find:**
 
-- `assimp` is **not preinstalled** in the sandbox. `apt-get install
-  assimp-utils` 404s until you run `apt-get update` first. Neither Blender nor
-  trimesh is available; assimp is the only thing here that reads `.fbx`.
-- `gltf-transform` comes from `npx --yes @gltf-transform/cli@latest` and works
-  offline of any install step.
+- `assimp` and `7z` are **not preinstalled**. `apt-get install assimp-utils
+  p7zip-full` 404s until `apt-get update` runs first. No Blender, no trimesh;
+  assimp is the only thing here that reads `.fbx`.
 - **The interim glTF must be written beside its own source.** assimp emits
-  texture references relative to the file it writes, so staging it in a temp
-  directory breaks every texture link and the optimize step fails with a bare
-  non-zero exit. This was a real bug in the first version of the script.
+  texture paths relative to the file it writes, so staging it in a temp
+  directory breaks every link and optimize fails with a bare non-zero exit.
+- **Repair materials before compression, not after.** Reading a Draco+WebP
+  GLB back needs extensions registered and a decoder; the uncompressed
+  interim needs neither.
+- `fix_materials.mjs` writes its result as `.glb` so the external buffers and
+  loose PNGs assimp left behind get cleaned up in one go.
 - Toy inputs get *bigger* through the pipeline (fixed Draco/WebP/JSON
   overhead). Only judge the ratio on real assets.
+- Extracted textures are gitignored (`assets_raw/**/*.png` etc). The archive
+  is the committed artifact; everything else regenerates.
 
-**Not solved: animations shipped in separate files** (the Mixamo pattern —
-mesh in one file, each clip in its own). The script converts the mesh file and
-ignores the rest. Merging clips onto one skeleton needs the rigs to match and
-is fragile. Nobody has tried it here yet.
+**Not solved:** animations in separate files (the Mixamo pattern) are not
+merged, and nothing splits a multi-object file into separately placeable
+models — which the tree pack needs before it can be instanced around a park.
 
 ## Invariants — the smoke test enforces these
 
@@ -226,6 +253,8 @@ full NBA two-hoop layout, which is the wrong court for a park.
 Infrastructure that does **not** exist yet and is needed before any of this
 lands (all verified absent by grep):
 
+- **An asset pipeline now exists** (above) and `src/assets/tree.glb` is
+  converted and verified rendering. Nothing loads it yet.
 - **No `LoadingManager`.** One hardcoded GLB import is the entire asset system.
 - **No `InstancedMesh`.** Trees and grass cannot be placed as individual meshes.
 - **No `LOD` or `Sprite`.** Nothing for distant kids as billboard imposters.

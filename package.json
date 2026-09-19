@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview --port 4173 --host 127.0.0.1",
     "test:smoke": "node scripts/smoke.mjs",
-    "assets": "node scripts/convert_assets.mjs"
+    "assets": "node scripts/convert_assets.mjs",
+    "assets:preview": "node scripts/preview_asset.mjs"
   },
   "keywords": [
     "basketball",
@@ -23,7 +24,11 @@
     "three": "^0.169.0"
   },
   "devDependencies": {
+    "@gltf-transform/core": "^4.5.0",
+    "@gltf-transform/extensions": "^4.5.0",
+    "@gltf-transform/functions": "^4.5.0",
     "playwright-core": "^1.62.1",
+    "sharp": "^0.35.4",
     "vite": "^5.4.0"
   }
 }

@@ -1,0 +1,55 @@
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#8fb3d9}canvas{display:block}</style></head>
+<body><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fb3d9);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+scene.add(new THREE.HemisphereLight(0xcfe3f2, 0x6d6a5a, 1.2));
+const sun = new THREE.DirectionalLight(0xfff0d8, 2.4);
+sun.position.set(6, 12, 4); sun.castShadow = true;
+sun.shadow.mapSize.set(1024,1024);
+Object.assign(sun.shadow.camera,{left:-15,right:15,top:15,bottom:-15,near:1,far:60});
+scene.add(sun);
+
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(60,60), new THREE.MeshStandardMaterial({color:0x6f7a4a, roughness:1}));
+ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 500);
+const draco = new DRACOLoader().setDecoderPath('/draco/');
+const loader = new GLTFLoader().setDRACOLoader(draco);
+
+const asset = new URLSearchParams(location.search).get('asset') || 'tree';
+loader.load(`/src/assets/${asset}.glb`, (g) => {
+  const o = g.scene;
+  o.traverse(n => { if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; } });
+  scene.add(o);
+  const box = new THREE.Box3().setFromObject(o);
+  const size = box.getSize(new THREE.Vector3());
+  const c = box.getCenter(new THREE.Vector3());
+  window.__info = { size: size.toArray().map(n=>+n.toFixed(2)), min: box.min.toArray().map(n=>+n.toFixed(2)), max: box.max.toArray().map(n=>+n.toFixed(2)) };
+  const d = Math.max(size.x, size.y, size.z);
+  camera.position.set(c.x + d*0.9, c.y + d*0.25, c.z + d*1.1);
+  camera.lookAt(c.x, c.y, c.z);
+  renderer.render(scene, camera);
+  window.__ready = true;
+  window.__shot = (ang, elev=0.25) => {
+    const r = d*1.4;
+    camera.position.set(c.x + Math.sin(ang)*r, c.y + d*elev, c.z + Math.cos(ang)*r);
+    camera.lookAt(c.x, c.y, c.z);
+    renderer.render(scene, camera);
+  };
+}, undefined, (e) => { window.__err = String(e); window.__ready = true; });
+</script></body></html>

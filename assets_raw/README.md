@@ -1,76 +1,106 @@
 # assets_raw — drop downloaded models here
 
-This is the inbox for model packs downloaded from the internet. Nothing in
-here ships; `npm run assets` converts each folder into one compressed
-self-contained `.glb` in `src/assets/`.
+The inbox for model packs downloaded from the internet. Nothing here ships:
+`npm run assets` turns each folder into one compressed, self-contained
+`.glb` in `src/assets/`.
 
 ## How to add a model
 
-**One folder per model. Every file that came with it goes in that folder.**
+**One folder per model. Every file that came with it goes in that folder,
+including the texture archive — leave it zipped.**
 
 ```
 assets_raw/
-  tree_oak/
-    tree.fbx                  <- the mesh
-    tree.mtl                  <- material sidecar, if the pack has one
-    textures/
-      bark_diffuse.png        <- textures, in whatever folder they came in
-      bark_normal.png
-      leaves_diffuse.png
+  tree/
+    tree.obj              <- the mesh
+    tree lowpoly.mtl      <- material sidecar (OBJ packs have one)
+    tree_texture.7z       <- textures, still archived
 ```
-
-Then:
 
 ```bash
-npm run assets            # convert everything in assets_raw/
-npm run assets -- tree_oak  # or just one folder
+npm run assets                 # everything
+npm run assets -- tree         # one folder
 ```
 
-Output: `src/assets/tree_oak.glb` — mesh, textures and materials packed into
-a single file, geometry Draco-compressed, textures re-encoded to WebP and
-capped at 2048px.
+Then **look at it** before believing it — see *Check it rendered* below.
+
+## What the pipeline does
+
+Five stages, because no single tool survives a real download:
+
+| | Stage | Why it exists |
+|---|---|---|
+| 0 | unpack `.zip` / `.7z` | Texture sets ship archived beside the mesh |
+| 1 | `prep_textures.py` | Normalises what glTF cannot express (below) |
+| 2 | `assimp` | Reads `.fbx`/`.obj`/`.dae`/`.blend` → glTF |
+| 3 | `fix_materials.mjs` | Puts back what assimp's glTF writer drops |
+| 4 | `gltf-transform` | WebP textures, Draco geometry, one binary |
+
+Stages 1 and 3 exist because of specific, repeatable failures. Each one was
+hit for real converting the first tree:
+
+- **`.tif` / `.tga` textures.** glTF permits PNG and JPEG only. 16-bit height
+  maps also have to come down to 8-bit.
+- **Cut-out alpha in a separate file.** OBJ puts it in its own greyscale image
+  via `map_d`; glTF wants it in the albedo's fourth channel. Unfixed, every
+  leaf renders as a solid rectangle.
+- **A `mtllib` naming a file that is not there.** Download sites rewrite
+  spaces, so `mtllib tree lowpoly.mtl` arrives as `tree+lowpoly.mtl` and the
+  mesh silently loses every material.
+- **An albedo the `.mtl` never references.** Packs routinely wire up normal
+  and roughness and leave base colour out, giving a flat grey trunk beside a
+  perfectly good bark texture.
+- **assimp drops `alphaMode`, `doubleSided`, normal and roughness maps** when
+  writing glTF, whatever the `.mtl` said.
+
+## Check it rendered
+
+A clean conversion and a correct model are different things. File size will
+not tell you the leaves came out solid.
+
+```bash
+npm run dev -- --port 5180          # one shell
+npm run assets:preview -- tree      # another
+```
+
+Writes `screenshots/asset_tree_{front,side,low}.png` and prints the model's
+world bounds. **Read the bounds.** Packs are modelled at wildly varying
+scales, and a file called "tree" often holds a whole grove — the first one
+converted here turned out to be nine trees spanning 46 m.
 
 ## Rules that actually matter
 
-1. **Keep the folder structure the download came in.** The mesh file points at
-   its textures by relative path (`textures/bark_diffuse.png`). Flatten the
-   folders and those links break and you get an untextured grey blob.
-2. **Include the `.mtl` if the mesh is an `.obj`.** That file is what connects
-   the mesh to its textures. It is the single most commonly forgotten piece.
+1. **Leave archives zipped.** The pipeline unpacks them; extracted textures
+   are gitignored so the repo does not carry every texture twice.
+2. **Keep the download's folder structure.** The `.mtl` points at textures by
+   relative path.
 3. **The folder name becomes the asset name.** `assets_raw/park_bench/` →
-   `src/assets/park_bench.glb`. Use lowercase with underscores.
-4. **One model per folder.** If a pack contains twelve props, that is twelve
-   folders, not one.
+   `src/assets/park_bench.glb`. Lowercase, underscores.
+4. **One model per folder.** Twelve props in a pack is twelve folders.
+5. **Do not commit loose textures.** `.gitignore` covers the usual extensions
+   under `assets_raw/`; the archive is the thing worth keeping.
 
 ## Formats
 
-Reads `.fbx`, `.obj`, `.dae`, `.blend`, `.3ds`, `.ply`, `.stl`, `.gltf`,
-`.glb` — via assimp, so most things a pack ships will work. A `.gltf`/`.glb`
-source skips conversion and goes straight to compression.
+`.fbx`, `.obj`, `.dae`, `.blend`, `.3ds`, `.ply`, `.stl`, `.gltf`, `.glb`.
+A `.gltf`/`.glb` source skips conversion and goes straight to compression.
 
-If a folder holds several mesh files the script takes the most
-web-friendly format, then the largest file, on the assumption that the biggest
-mesh is the model rather than a collision proxy or a low LOD. If it picks
-wrong, delete the ones you do not want.
+If a folder holds several mesh files the script prefers the most web-friendly
+format, then the largest file. A pack shipping the same model as `.blend`,
+`.obj`, `.dae` **and** `.fbx` only needs one of them kept.
 
-## Known gap: animations in separate files
+## Known gaps
 
-Packs sometimes ship the mesh in one file and each animation in its own
-(the Mixamo pattern). This script does **not** merge those — it converts the
-mesh file and any animation inside it, and ignores the rest. Merging separate
-animation clips onto one skeleton needs the rigs to match exactly and is
-fragile. If you have a model like this, say so rather than assuming it worked.
+- **Animations in separate files** (the Mixamo pattern) are not merged. The
+  script converts the mesh file and ignores the rest.
+- **No splitting.** A file holding nine trees converts as one nine-tree
+  object. Placing them individually needs a separate step that does not exist.
 
-## Size
+## Size and licences
 
-Keep individual raw files under ~20 MB. Git stores every binary forever, so a
-large file committed once stays in the repo's history even after deletion. If
-a source file is bigger than that, it is film- or archviz-grade and wants
-decimating before it comes anywhere near a web build.
+Keep raw files under ~20 MB; git keeps every binary forever. A 2.85 GB `.obj`
+is not a usable asset — find the `.fbx` of the same model.
 
-## Licences
-
-These are third-party downloads. Note where each one came from and what its
-licence allows — several "free" model sites are personal-use-only or require
-attribution. Same open question as `src/assets/hand_right.glb`. It does not
-matter while building; it matters if this is ever published.
+These are third-party downloads. Note where each came from and what its
+licence allows; several "free" sites are personal-use-only or require
+attribution. Same open question as `src/assets/hand_right.glb`.
