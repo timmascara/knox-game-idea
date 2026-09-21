@@ -320,42 +320,60 @@ rewriting every reference (GLTFLoader sniffs content, not extension;
 `npm run build && npm run artifact` and publish `.artifact/index.html` with
 the printed file map.
 
-### What makes it read as a park (the owner's second look)
+### What makes it read as a park — THE thing, got wrong three times
 
-The owner's verdict on the fenced cut: *"it looks like a park and not an
-open plains with some trees"* — about a **reference photograph**, not about
-what was on screen. What was on screen was still plains. The lesson, and it
-is the important one in this whole section:
+The owner said the same thing three times and three passes missed it:
+*"you can still see it as an open world... in the concept art everywhere you
+looked it was a neighborhood."*
 
-**A park is defined by what is beyond its fence.** Court → fence → grass →
-trees → horizon is a court in a field, however good each layer is. The eye
-runs to the horizon and finds nothing, so the scene reads as open country.
-What fixed it was giving the world an edge:
+**The test is occlusion, not decoration.** Standing on the court and looking
+in any direction, if the ground plane runs away to a horizon, the scene reads
+as open country — and no amount of furniture scattered on it changes that.
+The three failed passes all added *things* (fence, benches, lamps, houses at
+60–112 m) while leaving every sightline open. Houses that far away and 3–6 m
+tall are a strip of dots under an empty sky; the eye goes straight past them
+to the horizon behind.
 
-- **Houses** (`_buildNeighbourhood`): ~54 boxes with four-sided cone roofs at
-  60–112 m, a one-band window texture, domestic sizes (5–11 m wide, 3–6 m
-  tall). A few hundred triangles total and it is the single biggest change
-  in the whole park. Earlier passes had them bigger and closer and they read
-  as barracks — keep them small and far.
-- **Street lamps** (`_buildLamps`): five, with a curved arm over the court.
-  Nothing says municipal park faster.
-- **Leaf litter** (`_scatterLeaves`): 260 instanced quads from the decal pack
-  (`scripts/prep_decals.py` merges each set's separate alpha into an RGBA
-  WebP). Two triangles each, and they do more for "nobody has swept this in
-  a month" than any geometry would.
-- A bin and a footpath out of the west gate.
-- **Warmer, lower sun** — `sunOffset` (24, 21, 12), 0xffdfb4 at 3.8, and
-  `toneMappingExposure` 1.18 because ACES pulls the midtones down hard.
+What works is a **close, tall, continuous ring you cannot see past**:
 
-**Dead end, do not repeat:** a ring of flat green planes as a "far treeline"
-behind the houses. It reads as a cardboard wall the houses are pasted on to.
-Real trees near, houses in the middle distance and the hill ring far away
-are already three layers of depth; a fourth flat one only looks flat.
+- Three rings of buildings, fronts at ~30 m / ~50 m / ~78 m, **7–15 m tall**
+  (two and three storeys, not bungalows), walked round the perimeter in even
+  angular steps so each row is continuous.
+- Front rows use `wFrac` under 1, leaving **alleys between the houses** —
+  that is what makes a street read as separate buildings rather than a wall.
+  The **back row is deliberately continuous** (`wFrac` over 1) as the
+  backstop that closes the sightlines those alleys open.
+- Buildings face the park. Heights alternate short/tall along each row so the
+  skyline is jagged. Houses (under 8.5 m) get a ridge roof, blocks get a flat
+  roof with a parapet.
+- Wall colours must be **varied and fairly saturated**. The first attempt used
+  muted beiges and the sky's blue-green bounce flattened them all into one
+  grey-green wall.
+- The tree belt was pulled in to sit *between* the fence and the houses
+  rather than sprawling past them.
 
-**Still not the reference:** that photograph is golden hour, and the light
-here is a mild late afternoon. The owner has not said which they want, so it
-has not been pushed further. Every knob is in `World._buildLights` and
-`Game._initRenderer`.
+**`Park.verifyEnclosure()` measures it** — 1,800 rays from five points on the
+court at eye height, and every one must hit a building. It is not decoration:
+adding the alleys took it from 0 escapes to 9, which is how the need for the
+continuous back row was found. **Re-run it after touching any of this.**
+
+Other dead ends, do not repeat:
+- Flat green planes as a "far treeline" behind the houses: reads as a
+  cardboard wall with the houses pasted on it.
+- A 4-sided `ConeGeometry` roof sized off `max(w,d) * 0.78`. Its base square
+  has *diagonal* 2r, so the roof came out half again as wide as its house
+  and left pale triangles jutting over the grass. Radius is `d / sqrt2`.
+- A footpath placed 28 m out running parallel to the court, connected to
+  nothing: foreshortens into a pale triangle. It now runs out of the gate.
+
+Also in: street lamps, leaf litter (260 instanced quads from the decal pack,
+`scripts/prep_decals.py` merges each set's separate alpha into RGBA WebP), a
+bin, and a warmer lower sun with `toneMappingExposure` 1.18 because ACES
+pulls the midtones into mud.
+
+**Still not the reference:** that photograph is golden hour; this is a mild
+late afternoon. The owner has not chosen. Knobs are in `World._buildLights`
+and `Game._initRenderer`.
 
 ### Performance
 

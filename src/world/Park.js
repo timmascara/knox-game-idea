@@ -46,57 +46,154 @@ export class Park {
   }
 
   /**
-   * Houses, rooftops and a far treeline beyond the park.
+   * The neighbourhood the park sits in.
    *
-   * This is the thing that makes it read as a park rather than a court in a
-   * field. A park is *bounded* — you see the neighbourhood it sits in. With
-   * nothing past the trees the eye runs to the horizon and the whole scene
-   * reads as open plains, which is exactly what the owner said it looked
-   * like. Everything here is a box or a prism, a few hundred triangles in
-   * total, and none of it is ever approached.
+   * **The test this has to pass is occlusion, not decoration.** Standing on
+   * the court and looking in any direction, you must not be able to see the
+   * ground plane run away to the horizon. If you can, the scene reads as open
+   * country no matter how much furniture is scattered on it — which is what
+   * three earlier passes got wrong. Houses at 60-112 m and 3-6 m tall are a
+   * strip of dots under an empty sky; the eye goes straight past them.
+   *
+   * So the buildings are **close** (first row fronts at ~30 m, just behind
+   * the tree belt), **tall** (two and three storeys, 7-11 m), and **laid out
+   * in continuous rows** that leave no angular gap. Three rings, each behind
+   * the last, so anywhere a gap does open in the first row the second fills
+   * it. They face the park, as houses on a street around a park would,
+   * rather than being randomly rotated boxes.
+   *
+   * `verifyEnclosure()` measures it: rays from the court at eye height, all
+   * the way round, must every one of them hit something.
    */
   _buildNeighbourhood(rand) {
-    const wallTex = buildingTexture();
-    const roofCols = [0x6e4433, 0x5a4a44, 0x7a5a3c, 0x4a4442];
-    const wallCols = [0xd8cfc0, 0xc9bda9, 0xd2c6b4, 0xbfae99, 0xcbbfae];
-
-    const wallMats = wallCols.map((c) =>
-      new THREE.MeshStandardMaterial({ map: wallTex, color: c, roughness: 0.92 }));
-    const roofMats = roofCols.map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.85 }));
-
     const group = new THREE.Group();
     group.name = 'neighbourhood';
+    this._blockers = [];
 
-    for (let i = 0; i < 54; i++) {
-      const ang = rand() * Math.PI * 2;
-      const r = 60 + Math.pow(rand(), 0.8) * 52;
-      const x = Math.cos(ang) * r;
-      const z = Math.sin(ang) * r * 0.92;
-      const w = 5 + rand() * 6;
-      const d = 5 + rand() * 5.5;
-      const h = 3.2 + rand() * 3.2;
+    // Varied and reasonably saturated. The first pass used muted beiges and
+    // the sky's own blue-green bounce flattened them all into one grey-green
+    // wall — the buildings need to differ from each other by more than the
+    // light differs across them.
+    const wallCols = [0xd9c9a8, 0xb5735a, 0xe0d6c4, 0x9aa6a8, 0xc8a878, 0xa8896c, 0xd6c0a2, 0x8f9d8a, 0xcf8f6a];
+    const roofCols = [0x7a3f2c, 0x4a4340, 0x8a5636, 0x3d3a38, 0x6a4a38, 0x5c4a3e];
+    const facade = facadeTexture();
 
-      const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMats[(rand() * wallMats.length) | 0]);
-      body.position.set(x, h / 2, z);
-      body.rotation.y = rand() * Math.PI * 2;
-      group.add(body);
+    // Ring: [front distance on X, front distance on Z, height range, how far
+    // apart along the row]. Each row sits behind the one before it.
+    // `wFrac` is building width as a fraction of the spacing: under 1 leaves
+    // alleys between the houses, over 1 overlaps them into a continuous run.
+    // The front rows get alleys because that is what a street looks like; the
+    // back row is deliberately continuous, as the backstop that closes every
+    // sightline those alleys open. Without it verifyEnclosure() reports
+    // escapes straight through the gaps.
+    const rings = [
+      { rx: 30, rz: 36, h: [7.0, 10.5], step: 13, jitter: 2.0, wFrac: [0.58, 0.30] },
+      { rx: 48, rz: 55, h: [8.0, 12.5], step: 16, jitter: 3.0, wFrac: [0.72, 0.32] },
+      { rx: 74, rz: 82, h: [10.0, 15.0], step: 20, jitter: 2.0, wFrac: [1.02, 0.25] },
+    ];
 
-      // A pitched roof: a four-sided cone is a hip roof at this distance.
-      const roof = new THREE.Mesh(
-        new THREE.ConeGeometry(Math.max(w, d) * 0.72, 1.6 + rand() * 1.8, 4),
-        roofMats[(rand() * roofMats.length) | 0]
-      );
-      roof.position.set(x, h + (roof.geometry.parameters.height / 2) - 0.05, z);
-      roof.rotation.y = body.rotation.y + Math.PI / 4;
-      group.add(roof);
+    for (const ring of rings) {
+      // Walk the perimeter in even angular steps so the row is continuous.
+      const circumference = 2 * Math.PI * Math.max(ring.rx, ring.rz);
+      const n = Math.max(16, Math.round(circumference / ring.step));
+      for (let i = 0; i < n; i++) {
+        const ang = (i / n) * Math.PI * 2 + (rand() - 0.5) * 0.05;
+        const jx = (rand() - 0.5) * ring.jitter;
+        const jz = (rand() - 0.5) * ring.jitter;
+        const x = Math.cos(ang) * ring.rx + jx;
+        const z = Math.sin(ang) * ring.rz + jz;
+        // Alternate short and tall along the row so the skyline is jagged
+        // rather than one flat parapet.
+        const tallish = (i % 3 === 0) ? 1 : (i % 3 === 1 ? 0.62 : 0.82);
+        const h = ring.h[0] + (ring.h[1] - ring.h[0]) * (tallish * (0.75 + rand() * 0.45));
+        // Deliberately narrower than the spacing, so there are alleys between
+        // the houses. The ring behind closes those sightlines — which is why
+        // there are three rings and why verifyEnclosure() has to be re-run
+        // after touching any of this.
+        const w = ring.step * (ring.wFrac[0] + rand() * ring.wFrac[1]);
+        const d = 7 + rand() * 7;
+
+        const g = new THREE.Group();
+        const wall = new THREE.MeshStandardMaterial({
+          map: facade.clone(), color: wallCols[(rand() * wallCols.length) | 0], roughness: 0.93,
+        });
+        // One window roughly every 2.6 m across and every 3.2 m up, so the
+        // facade reads at the right scale however wide the building is.
+        wall.map.repeat.set(Math.max(1, Math.round(w / 3.0)), Math.max(1, Math.round(h / 3.3)));
+        wall.map.needsUpdate = true;
+
+        const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wall);
+        body.position.y = h / 2;
+        body.castShadow = false;
+        body.receiveShadow = true;
+        g.add(body);
+
+        const roofMat = new THREE.MeshStandardMaterial({
+          color: roofCols[(rand() * roofCols.length) | 0], roughness: 0.88,
+        });
+        let roofH;
+        if (h < 8.5) {
+          // A house: a proper ridge roof running along the frontage.
+          roofH = 1.5 + rand() * 1.6;
+          // A 4-sided cone's base is a square whose DIAGONAL is 2r, so with
+          // the 45 degree turn below its side is r*sqrt2. Sizing the radius
+          // off `d * 0.78` made the roof half again as wide as its house and
+          // left big pale triangles jutting out over the grass.
+          const ridge = new THREE.Mesh(new THREE.CylinderGeometry(0, d / Math.SQRT2, roofH, 4), roofMat);
+          ridge.scale.set(w / d, 1, 1);
+          ridge.position.y = h + roofH / 2 - 0.05;
+          ridge.rotation.y = Math.PI / 4;
+          g.add(ridge);
+        } else {
+          // A block: flat roof with a parapet lip, which reads right at this
+          // size and keeps the skyline varied against the houses.
+          roofH = 0.5;
+          const parapet = new THREE.Mesh(new THREE.BoxGeometry(w + 0.35, roofH, d + 0.35), roofMat);
+          parapet.position.y = h + roofH / 2 - 0.08;
+          g.add(parapet);
+        }
+
+        g.position.set(x, 0, z);
+        // Face the park.
+        g.rotation.y = -ang + Math.PI / 2 + (rand() - 0.5) * 0.12;
+        group.add(g);
+
+        this._blockers.push({ x, z, r: Math.max(w, d) * 0.5, h: h + roofH });
+      }
     }
 
-    // No flat "treeline" billboards behind the houses. They were tried and
-    // read as cardboard slabs — a green wall the houses were pasted on to.
-    // Real trees near, houses in the middle distance and the hill ring far
-    // away already give the three layers of depth that bound the park.
-
     this.group.add(group);
+  }
+
+  /**
+   * Prove the horizon is closed off: cast rays from a few points on the court
+   * at eye height, all the way round, and report any that escape without
+   * meeting a building. Any escape is a sightline out to open ground, which
+   * is precisely what made this read as plains.
+   */
+  verifyEnclosure({ rays = 360, eye = 1.7, from = [[0, 0], [0, -12], [0, 12], [-7, 0], [7, 0]] } = {}) {
+    let escapes = 0;
+    let worst = null;
+    for (const [ox, oz] of from) {
+      for (let i = 0; i < rays; i++) {
+        const a = (i / rays) * Math.PI * 2;
+        const dx = Math.cos(a), dz = Math.sin(a);
+        let hit = false;
+        for (const b of this._blockers) {
+          // Distance from the blocker centre to the ray, and how far along.
+          const px = b.x - ox, pz = b.z - oz;
+          const t = px * dx + pz * dz;
+          if (t <= 0) continue;
+          const perp = Math.abs(px * dz - pz * dx);
+          if (perp > b.r) continue;
+          // Does it still rise above the eye line at that range? Anything
+          // shorter than the eye height leaves the horizon showing over it.
+          if (b.h > eye) { hit = true; break; }
+        }
+        if (!hit) { escapes++; worst = ((a * 180) / Math.PI).toFixed(0); }
+      }
+    }
+    return { escapes, total: rays * from.length, worstAngle: worst };
   }
 
   /**
@@ -150,12 +247,14 @@ export class Park {
     lid.position.set(bin.position.x, 0.89, bin.position.z);
     this.group.add(lid);
 
-    // A worn footpath leading away from the west gate.
+    // A worn footpath running OUT of the west gate toward the houses. The
+    // first version sat 28 m away running parallel to the court, connected
+    // to nothing, and foreshortened into a pale triangle on the grass.
     const pathMat = new THREE.MeshStandardMaterial({ color: 0x9a8f7a, roughness: 1 });
-    const path = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 34), pathMat);
+    const from = this.fenceW, to = 30;
+    const path = new THREE.Mesh(new THREE.PlaneGeometry(to - from, 1.6), pathMat);
     path.rotation.x = -Math.PI / 2;
-    path.rotation.z = Math.PI / 2;
-    path.position.set(-(this.fenceW + 17), 0.005, 0);
+    path.position.set(-(from + (to - from) / 2), 0.006, 0);
     path.receiveShadow = true;
     this.group.add(path);
   }
@@ -251,7 +350,7 @@ export class Park {
     // A belt around the fence: dense just beyond it, thinning with distance.
     for (let tries = 0; placed.length < count && tries < count * 60; tries++) {
       const ang = rand() * Math.PI * 2;
-      const out = 3.0 + Math.pow(rand(), 0.75) * 40;
+      const out = 2.5 + Math.pow(rand(), 0.8) * 16;
       const x = Math.cos(ang) * (this.fenceW + out);
       const z = Math.sin(ang) * (this.fenceL + out);
       // Hard clearance: nothing within 3 m of the fence, ever.
@@ -434,20 +533,34 @@ export class Park {
   }
 }
 
-/** Rows of windows, for houses only ever seen from 50 m and up. */
-function buildingTexture() {
-  const W = 128, H = 128;
+/**
+ * One window per tile, with a frame and a sill. The buildings are close
+ * enough now to be read properly, so the texture repeats once per window
+ * rather than carrying a whole facade.
+ */
+function facadeTexture() {
+  const S = 64;
   const c = document.createElement('canvas');
-  c.width = W; c.height = H;
+  c.width = c.height = S;
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = 'rgba(52,56,62,0.42)';
-  for (let row = 0; row < 2; row++) {
-    for (let col = 0; col < 3; col++) {
-      ctx.fillRect(20 + col * 38, 30 + row * 52, 18, 24);
-    }
-  }
+  ctx.fillRect(0, 0, S, S);
+  // Glass, darker at the top where it reflects the sky less.
+  const g = ctx.createLinearGradient(0, 18, 0, 46);
+  g.addColorStop(0, 'rgba(44,50,58,0.72)');
+  g.addColorStop(1, 'rgba(96,104,112,0.55)');
+  ctx.fillStyle = g;
+  ctx.fillRect(20, 18, 24, 28);
+  // Frame and sill.
+  ctx.strokeStyle = 'rgba(250,248,244,0.9)';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(20, 18, 24, 28);
+  ctx.beginPath();
+  ctx.moveTo(32, 18); ctx.lineTo(32, 46);
+  ctx.moveTo(20, 32); ctx.lineTo(44, 32);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(232,228,220,0.95)';
+  ctx.fillRect(17, 46, 30, 3);
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.colorSpace = THREE.SRGBColorSpace;
