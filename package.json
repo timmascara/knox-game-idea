@@ -9,7 +9,8 @@
     "preview": "vite preview --port 4173 --host 127.0.0.1",
     "test:smoke": "node scripts/smoke.mjs",
     "assets": "node scripts/convert_assets.mjs",
-    "assets:preview": "node scripts/preview_asset.mjs"
+    "assets:preview": "node scripts/preview_asset.mjs",
+    "artifact": "node scripts/prep_artifact.mjs"
   },
   "keywords": [
     "basketball",

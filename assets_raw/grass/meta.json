@@ -1,4 +1,9 @@
 {
   "scale": 0.01,
-  "heightTint": ["#5e6e22", "#8dbf45"]
+  "heightTint": [
+    "#5e6e22",
+    "#8dbf45"
+  ],
+  "simplify": 0.08,
+  "simplifyError": 0.05
 }

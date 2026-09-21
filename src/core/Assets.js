@@ -2,8 +2,6 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 
-import treeUrl from '../assets/tree.glb?url';
-import grassUrl from '../assets/grass.glb?url';
 import asphaltDiffUrl from '../assets/textures/asphalt_diff.webp?url';
 import asphaltNorUrl from '../assets/textures/asphalt_nor.webp?url';
 import asphaltRoughUrl from '../assets/textures/asphalt_rough.webp?url';
@@ -22,8 +20,13 @@ import groundRoughUrl from '../assets/textures/grass_ground_rough.webp?url';
  * handles EXT_texture_webp itself.
  */
 export async function loadParkAssets(onProgress = () => {}) {
-  const draco = new DRACOLoader().setDecoderPath(`${import.meta.env.BASE_URL}draco/`);
+  const base = import.meta.env.BASE_URL;
+  const draco = new DRACOLoader().setDecoderPath(`${base}draco/`);
   const gltf = new GLTFLoader().setDRACOLoader(draco);
+  // Models are served from public/models/<name>/model.gltf with their
+  // textures as sibling files — see scripts/convert_assets.mjs for why they
+  // are not embedded.
+  const model = (name) => `${base}models/${name}/model.gltf`;
   const tex = new THREE.TextureLoader();
 
   const glb = (url) => new Promise((res, rej) => gltf.load(url, res, undefined, rej));
@@ -43,8 +46,8 @@ export async function loadParkAssets(onProgress = () => {}) {
   const tick = (v) => { done++; onProgress(done / total); return v; };
 
   const [tree, grass, asphaltDiff, asphaltNor, asphaltRough, groundDiff, groundNor, groundRough] = await Promise.all([
-    glb(treeUrl).then(tick),
-    glb(grassUrl).then(tick),
+    glb(model('tree')).then(tick),
+    glb(model('grass')).then(tick),
     texture(asphaltDiffUrl, { srgb: true }).then(tick),
     texture(asphaltNorUrl).then(tick),
     texture(asphaltRoughUrl).then(tick),

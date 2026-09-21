@@ -17,3 +17,4 @@ assets_raw/**/*.tif
 assets_raw/**/*.tiff
 assets_raw/**/*.tga
 assets_raw/**/__interim.*
+.artifact/

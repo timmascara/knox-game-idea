@@ -32,7 +32,15 @@ import { readdirSync, statSync, mkdirSync, rmSync, existsSync, readFileSync, wri
 import { join, extname, basename, dirname, relative } from 'node:path';
 
 const RAW = 'assets_raw';
-const OUT = 'src/assets';
+// Models go to public/ as .gltf with their textures as SEPARATE FILES, not
+// embedded. An embedded texture has to be handed to the browser as a blob:
+// URL, and strict-CSP hosts (the published artifact frame among them) refuse
+// to load images from blob: — the model arrives, every material comes through
+// untextured white, and cut-out foliage turns into solid shards. Plain files
+// next to the .gltf are ordinary same-origin requests and always work. They
+// live in public/ so Vite copies them verbatim and the .gltf's relative URIs
+// still resolve.
+const OUT = 'public/models';
 // The interim glTF is written beside its own source rather than in a temp
 // directory: assimp emits texture references as paths relative to the file it
 // writes, so moving it elsewhere breaks every one of them.
@@ -166,13 +174,20 @@ let failed = 0;
 for (const name of folders) {
   const dir = join(RAW, name);
   const mesh = findMesh(dir);
-  if (!mesh) { console.error(`✗ ${name}: no mesh file found (looked for ${MESH_EXT.join(' ')})`); failed++; continue; }
+  if (!mesh) {
+    // assets_raw also holds texture-only folders (ground sets, decal packs).
+    // Not a failure — there is just nothing here to convert.
+    console.log(`· ${name.padEnd(20)} no mesh, skipped (texture-only folder)`);
+    continue;
+  }
 
   const before = dirSize(dir);   // measured after unpacking, below
   const interim = join(dir, INTERIM);
   const fixed = join(dir, INTERIM_FIXED);
-  const out = join(OUT, `${name}.glb`);
+  const outDir = join(OUT, name);
+  const out = join(outDir, 'model.gltf');
 
+  mkdirSync(outDir, { recursive: true });
   try {
     // Stage 0 — unpack any texture archives sitting beside the mesh.
     for (const f of readdirSync(dir)) {
@@ -203,9 +218,19 @@ for (const name of folders) {
       if (existsSync(fixed)) optimizeFrom = fixed;
     }
 
+    // Optional decimation, from meta.json's `simplify` (a target triangle
+    // ratio). The grass clump ships at ~15k triangles for something rendered
+    // a few centimetres tall; at 900 instances that was 6.7 M triangles, 92%
+    // of the whole scene, and it stalled the headless harness outright.
+    const meta = existsSync(join(dir, 'meta.json')) ? JSON.parse(readFileSync(join(dir, 'meta.json'), 'utf8')) : {};
+    const simplify = meta.simplify
+      ? ['--simplify', 'true', '--simplify-ratio', String(meta.simplify), '--simplify-error', String(meta.simplifyError ?? 0.02)]
+      : ['--simplify', 'false'];
+
     // Stage 4 — resolve external textures, compress, embed into one binary.
     execFileSync('npx', ['--yes', '@gltf-transform/cli@latest', 'optimize', optimizeFrom, out,
       '--compress', 'draco', '--texture-compress', 'webp', '--texture-size', '2048',
+      ...simplify,
       // optimize's default `join` fuses every node sharing a material into one
       // mesh, which destroys the per-object split (and any pack that arrived
       // already separated). Keep nodes as they are.

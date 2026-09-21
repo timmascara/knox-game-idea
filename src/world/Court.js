@@ -1,6 +1,16 @@
 import * as THREE from 'three';
 import { COURT } from '../core/Constants.js';
 
+/** Small, seedable PRNG so the court weathers the same way every load. */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 /**
  * The playing surface. The court markings are painted once into a high-res
  * canvas (top-down, real proportions) and used as the slab's colour map, which
@@ -37,21 +47,22 @@ export class Court {
     const border = COURT.apron;
     const worldW = COURT.width + border * 2;
     const worldL = COURT.length + border * 2;
-    const ppm = 48; // pixels per metre
+    const ppm = 64; // pixels per metre
     const cw = Math.round(worldW * ppm);
     const ch = Math.round(worldL * ppm);
-    const canvas = document.createElement('canvas');
-    canvas.width = cw;
-    canvas.height = ch;
-    const ctx = canvas.getContext('2d');
 
     // world(x,z) -> canvas(px,py). +X right, +Z is down the canvas.
     const X = (x) => cw / 2 + x * ppm;
     const Z = (z) => ch / 2 + z * ppm;
     const S = (m) => m * ppm;
+    const rand = mulberry32(31337); // same wear every load
 
-    // Apron + surface. Over asphalt the tints are translucent so the grain
-    // and the cracks come through; the apron gets a darker wash.
+    const canvas = document.createElement('canvas');
+    canvas.width = cw;
+    canvas.height = ch;
+    const ctx = canvas.getContext('2d');
+
+    // --- 1. the asphalt itself ----------------------------------------------
     if (this.asphalt?.diff?.image) {
       const img = this.asphalt.diff.image;
       const pat = ctx.createPattern(img, 'repeat');
@@ -60,10 +71,10 @@ export class Court {
       ctx.fillStyle = pat;
       ctx.fillRect(0, 0, cw, ch);
       ctx.save();
-      ctx.globalAlpha = 0.55;
+      ctx.globalAlpha = 0.5;
       ctx.fillStyle = this.apron;
       ctx.fillRect(0, 0, cw, ch);
-      ctx.globalAlpha = 0.42;
+      ctx.globalAlpha = 0.34;
       ctx.fillStyle = this.surface;
       this._roundRect(ctx, X(-COURT.width / 2), Z(-COURT.length / 2), S(COURT.width), S(COURT.length), S(0.2));
       ctx.fill();
@@ -76,29 +87,58 @@ export class Court {
       ctx.fill();
     }
 
-    ctx.strokeStyle = this.line;
-    ctx.fillStyle = this.line;
-    ctx.lineWidth = Math.max(2, S(COURT.lineWidth));
-    ctx.lineJoin = 'round';
+    this._weatherAsphalt(ctx, cw, ch, S, rand);
+
+    // --- 2. the markings, on their own layer so they can be worn away -------
+    const lines = document.createElement('canvas');
+    lines.width = cw;
+    lines.height = ch;
+    const lc = lines.getContext('2d');
+    lc.strokeStyle = this.line;
+    lc.fillStyle = this.line;
+    lc.lineWidth = Math.max(1.5, S(COURT.lineWidth));
+    lc.lineJoin = 'round';
+    lc.lineCap = 'butt';
+
+    // Key paint, laid down first and kept translucent — park paint is thin
+    // and the asphalt always shows through it.
+    for (const sign of [1, -1]) {
+      const baselineZ = sign * (COURT.length / 2);
+      const ftZ = sign * (COURT.length / 2 - COURT.freeThrowFromBaseline);
+      lc.save();
+      lc.globalAlpha = 0.42;
+      lc.fillStyle = this.key;
+      lc.fillRect(X(-COURT.keyWidth / 2), Z(Math.min(baselineZ, ftZ)), S(COURT.keyWidth), S(Math.abs(ftZ - baselineZ)));
+      lc.restore();
+      lc.fillStyle = this.line;
+    }
 
     // Boundary
-    ctx.strokeRect(X(-COURT.width / 2), Z(-COURT.length / 2), S(COURT.width), S(COURT.length));
+    lc.strokeRect(X(-COURT.width / 2), Z(-COURT.length / 2), S(COURT.width), S(COURT.length));
 
-    // Center line + circle
-    ctx.beginPath();
-    ctx.moveTo(X(-COURT.width / 2), Z(0));
-    ctx.lineTo(X(COURT.width / 2), Z(0));
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(X(0), Z(0), S(COURT.centerCircleRadius), 0, Math.PI * 2);
-    ctx.stroke();
+    // Centre line + circle
+    lc.beginPath();
+    lc.moveTo(X(-COURT.width / 2), Z(0));
+    lc.lineTo(X(COURT.width / 2), Z(0));
+    lc.stroke();
+    lc.beginPath();
+    lc.arc(X(0), Z(0), S(COURT.centerCircleRadius), 0, Math.PI * 2);
+    lc.stroke();
 
-    this._drawEnd(ctx, +1, { X, Z, S });
-    this._drawEnd(ctx, -1, { X, Z, S });
+    this._drawEnd(lc, +1, { X, Z, S });
+    this._drawEnd(lc, -1, { X, Z, S });
+
+    this._wearLines(lc, cw, ch, S, rand);
+
+    // --- 3. composite: paint is never pure white on a park court ------------
+    ctx.save();
+    ctx.globalAlpha = 0.82;
+    ctx.drawImage(lines, 0, 0);
+    ctx.restore();
 
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = 8;
+    tex.anisotropy = 16;
     this.texture = tex;
 
     const geo = new THREE.PlaneGeometry(worldW, worldL);
@@ -138,23 +178,82 @@ export class Court {
     this.group.add(edge);
   }
 
+  /**
+   * Cracks, patches and staining. A clean asphalt tile repeated over 400 m²
+   * reads as a car park; the large-scale damage is what makes it a court that
+   * has been rained on for ten years.
+   */
+  _weatherAsphalt(ctx, cw, ch, S, rand) {
+    ctx.save();
+
+    // Broad blotches: resurfacing patches and where water sits.
+    for (let i = 0; i < 60; i++) {
+      const x = rand() * cw;
+      const y = rand() * ch;
+      const r = S(0.6 + rand() * 3.4);
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      const dark = rand() < 0.62;
+      g.addColorStop(0, dark ? 'rgba(30,32,34,0.10)' : 'rgba(185,187,183,0.09)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Cracks: a random walk that branches, thinning as it goes.
+    ctx.lineCap = 'round';
+    const crack = (x, y, ang, len, w, depth) => {
+      ctx.strokeStyle = `rgba(18,19,21,${0.30 + rand() * 0.26})`;
+      ctx.lineWidth = w;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      let cx = x, cy = y, a = ang;
+      const steps = 6 + (rand() * 10) | 0;
+      for (let i = 0; i < steps; i++) {
+        a += (rand() - 0.5) * 0.9;
+        cx += Math.cos(a) * len;
+        cy += Math.sin(a) * len;
+        ctx.lineTo(cx, cy);
+      }
+      ctx.stroke();
+      if (depth > 0 && rand() < 0.65) crack(cx, cy, a + (rand() - 0.5) * 1.8, len * 0.8, w * 0.65, depth - 1);
+    };
+    for (let i = 0; i < 26; i++) {
+      crack(rand() * cw, rand() * ch, rand() * Math.PI * 2, S(0.35 + rand() * 0.5), 1.1 + rand() * 1.6, 2);
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Chip the markings. Paint wears off in patches — under the basket, along
+   * the baseline, wherever feet land — so the line layer gets punched through
+   * with transparent blobs before it is composited.
+   */
+  _wearLines(lc, cw, ch, S, rand) {
+    lc.save();
+    lc.globalCompositeOperation = 'destination-out';
+    for (let i = 0; i < 520; i++) {
+      const x = rand() * cw;
+      const y = rand() * ch;
+      const r = S(0.05 + Math.pow(rand(), 2.2) * 0.9);
+      const g = lc.createRadialGradient(x, y, 0, x, y, r);
+      const a = 0.30 + rand() * 0.6;
+      g.addColorStop(0, `rgba(0,0,0,${a})`);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      lc.fillStyle = g;
+      lc.beginPath();
+      lc.arc(x, y, r, 0, Math.PI * 2);
+      lc.fill();
+    }
+    lc.restore();
+  }
+
   _drawEnd(ctx, sign, { X, Z, S }) {
     const baselineZ = sign * (COURT.length / 2);
     const basketZ = sign * (COURT.length / 2 - COURT.rimFromBaseline);
     const ftZ = sign * (COURT.length / 2 - COURT.freeThrowFromBaseline);
     const halfKey = COURT.keyWidth / 2;
-
-    // Paint fill
-    ctx.save();
-    ctx.globalAlpha = 0.9;
-    ctx.fillStyle = this.key;
-    ctx.fillRect(
-      X(-halfKey),
-      Z(Math.min(baselineZ, ftZ)),
-      S(COURT.keyWidth),
-      S(Math.abs(ftZ - baselineZ))
-    );
-    ctx.restore();
 
     // Key outline
     ctx.strokeRect(
@@ -169,17 +268,9 @@ export class Court {
     ctx.arc(X(0), Z(ftZ), S(COURT.freeThrowCircleRadius), 0, Math.PI * 2);
     ctx.stroke();
 
-    // Restricted-area arc under basket (semicircle facing the court)
-    ctx.beginPath();
-    const raStart = sign > 0 ? Math.PI : 0;
-    ctx.arc(X(0), Z(basketZ), S(COURT.restrictedRadius), raStart, raStart + Math.PI);
-    ctx.stroke();
-
-    // Backboard/rim tick
-    ctx.beginPath();
-    ctx.moveTo(X(-0.45), Z(basketZ));
-    ctx.lineTo(X(0.45), Z(basketZ));
-    ctx.stroke();
+    // No restricted-area arc and no rim tick: those are pro markings, and a
+    // park court does not have them. Keeping them was what made this read as
+    // a televised court dropped into a field.
 
     // Three-point line: corner straights + arc
     const cornerX = COURT.width / 2 - COURT.threePointStraight;
@@ -199,10 +290,13 @@ export class Court {
       // Arc between the two straight ends, bulging toward centre court
       const a0 = Math.atan2(straightEndZ - basketZ, cornerX);
       const a1 = Math.atan2(straightEndZ - basketZ, -cornerX);
+      // Sweep the LONG way, through centre court. Canvas angles run clockwise
+      // because +Z is down the canvas, so the basket at +Z needs the
+      // anticlockwise sweep and the basket at -Z the clockwise one. Getting
+      // this backwards drew only the two stubs by the baseline and no arc at
+      // all — which is what "the court lines are terrible" meant.
       ctx.beginPath();
-      // choose sweep that bulges to centre
-      if (sign > 0) ctx.arc(X(0), Z(basketZ), S(r), a1, a0, true);
-      else ctx.arc(X(0), Z(basketZ), S(r), a0, a1, true);
+      ctx.arc(X(0), Z(basketZ), S(r), a0, a1, sign > 0);
       ctx.stroke();
     }
   }

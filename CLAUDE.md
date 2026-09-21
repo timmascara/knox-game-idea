@@ -20,11 +20,10 @@ the next thing.
   *Shooting* below. The owner's first-play notes were: a jump key that
   feels right while moving, layups, and the ball not running away after a
   make — all done; the sounds and the meter speed still have no verdict.
-- **Stage 3 — the park. First cut built, not yet played.** Trees, grass
-  clumps, a grass ground and an asphalt court surface from the owner's
-  downloaded packs, plus image-based lighting from the sky. See *The park*
-  below. Still to come: ambience audio, distant people, leaf scatter, and
-  the court itself becoming a park court rather than an NBA layout.
+- **Stage 3 — the park. Second cut; the owner has seen it, not played it.**
+  Trees, rough grass, a chain-link fence, benches, a weathered asphalt court
+  and image-based lighting. See *The park* below. Still to come: ambience
+  audio, distant people, leaf scatter.
 
 ## Leave the repo ready for the next session
 
@@ -269,9 +268,74 @@ meshes in the first place. Result on the tree pack: **7 placeable trees**,
 not 9 — two pairs of saplings share a ground patch and come out as a pair.
 Acceptable; not worth more time.
 
-**Verified by rendering the real game headless** (screenshots/world_*.png
-from a throwaway script — the pattern is in `scripts/preview_asset.mjs`):
-34 trees, 220 clumps, environment on, no console errors.
+### What the owner's first look found — all four were real
+
+1. **Trees standing on the court.** `Park._instance` folded the variant
+   node's *whole* world matrix into each instance. Those nodes come from
+   `split_objects.mjs` and still carry where each tree stood in the original
+   46 m grove, so every tree was displaced by up to 27 m from where it was
+   placed. **Fold in rotation and scale only** (`.setPosition(0,0,0)` on the
+   local matrix) — the rotation still matters, it is what stands the Z-up
+   grass upright.
+2. **"The court lines are terrible."** They were: the three-point *arc* was
+   not drawn at all. `ctx.arc` was called with the endpoints swapped, so it
+   swept the short way and produced two stubs by the baseline and nothing
+   else. Canvas angles run clockwise because +Z maps down the canvas, so the
+   basket at +Z needs `anticlockwise = true` and the one at −Z `false`.
+3. **"The grass is in clumps."** The pack's clump is ~1.9 m across; at the
+   old 0.6–1.15 scale each was a 1–2 m shrub with bald ground between. Now
+   0.16–0.46, in overlapping drifts.
+4. **"Everything is white."** Only in the published artifact, never locally
+   — see *Models carry their textures as separate files* below.
+
+Also fixed: the court is weathered (cracks, patches, chipped paint) instead
+of looking like a televised court dropped in a field, and the pro-only
+restricted-area arc and rim tick are gone. A chain-link fence with a
+walk-through gap each side, plus benches, is what actually made it read as
+a park rather than "here are some trees around your court".
+
+### Models carry their textures as separate files, not embedded
+
+`npm run assets` writes `public/models/<name>/model.gltf` with its textures
+as sibling `.webp` files. **Do not go back to a single self-contained
+`.glb`.** An embedded texture has to reach the browser as a `blob:` URL, and
+strict-CSP hosts — the published artifact frame among them — refuse images
+from `blob:`. The model still loads, every material comes through untextured
+white and cut-out foliage becomes solid shards. That is exactly what the
+owner saw, and it is invisible here: headless Chromium has no such policy,
+so **a screenshot from this sandbox cannot catch it**. Separate files are
+ordinary same-origin requests and always work.
+
+`public/` is deliberate: Vite copies it verbatim, so the `.gltf`'s relative
+texture URIs still resolve. Only `hand_right.glb` is still inlined, because
+the single-file page needs it.
+
+### Publishing to the artifact: `npm run artifact`
+
+The artifact host serves a fixed extension list that excludes `.glb`,
+`.gltf` and `.bin`. `scripts/prep_artifact.mjs` stages `dist/` into
+`.artifact/`, renaming `.gltf`→`.json` and `.bin`/`.glb`→`.wasm` and
+rewriting every reference (GLTFLoader sniffs content, not extension;
+`application/wasm` is binary-safe). It also drops the 7 MB sourcemap. Run
+`npm run build && npm run artifact` and publish `.artifact/index.html` with
+the printed file map.
+
+### Triangle budget — the harness is the canary
+
+`scripts/smoke.mjs` renders through SwiftShader with no GPU, so a scene the
+owner's machine would shrug at can blow its 30 s screenshot timeout. That is
+a **useful** signal, not a nuisance: it caught the grass clump shipping at
+**14,880 triangles** for something rendered a few centimetres tall — 900 of
+them was 6.7 M triangles, 92% of the whole scene, and 7.3 M total stalled
+the harness outright.
+
+`meta.json` now takes `simplify` (a target triangle ratio) and
+`simplifyError`, passed through to gltf-transform. The grass at `0.08` came
+down to 1,193 triangles with no visible loss at the size it renders, which
+bought the density that fixed "it's all so bare": **56 trees and 1,500 grass
+tufts at 1.56 M triangles and 110 draw calls** — less than a quarter of the
+first cut's cost, several times its density. Check any new pack's triangles
+per instance before scattering it.
 
 ## Invariants — the smoke test enforces these
 
