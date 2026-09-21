@@ -20,10 +20,14 @@ the next thing.
   *Shooting* below. The owner's first-play notes were: a jump key that
   feels right while moving, layups, and the ball not running away after a
   make — all done; the sounds and the meter speed still have no verdict.
-- **Stage 3 — the park. Second cut; the owner has seen it, not played it.**
-  Trees, rough grass, a chain-link fence, benches, a weathered asphalt court
-  and image-based lighting. See *The park* below. Still to come: ambience
-  audio, distant people, leaf scatter.
+- **Stage 3 — the park. In progress.** Trees, rough grass, a chain-link
+  fence, benches, lamps, leaf litter, a weathered asphalt court and
+  image-based lighting are in and the horizon is closed off. **The
+  neighbourhood that closes it is a placeholder the owner has rejected as a
+  final form** — keep the occlusion, replace the ring of identical houses.
+  Read *What makes it read as a park* below before touching the world; the
+  distinction is the whole point. Still to come after that: ambience audio,
+  distant people.
 
 ## Leave the repo ready for the next session
 
@@ -320,56 +324,86 @@ rewriting every reference (GLTFLoader sniffs content, not extension;
 `npm run build && npm run artifact` and publish `.artifact/index.html` with
 the printed file map.
 
-### What makes it read as a park — THE thing, got wrong three times
+### What makes it read as a park — the principle, and the placeholder
 
-The owner said the same thing three times and three passes missed it:
+Two separate things live here. **Keep the first. Replace the second.**
+
+#### KEEP: the horizon has to be occluded, and it is measurable
+
+The owner said the same thing three times before it landed:
 *"you can still see it as an open world... in the concept art everywhere you
 looked it was a neighborhood."*
 
 **The test is occlusion, not decoration.** Standing on the court and looking
 in any direction, if the ground plane runs away to a horizon, the scene reads
 as open country — and no amount of furniture scattered on it changes that.
-The three failed passes all added *things* (fence, benches, lamps, houses at
-60–112 m) while leaving every sightline open. Houses that far away and 3–6 m
-tall are a strip of dots under an empty sky; the eye goes straight past them
-to the horizon behind.
-
-What works is a **close, tall, continuous ring you cannot see past**:
-
-- Three rings of buildings, fronts at ~30 m / ~50 m / ~78 m, **7–15 m tall**
-  (two and three storeys, not bungalows), walked round the perimeter in even
-  angular steps so each row is continuous.
-- Front rows use `wFrac` under 1, leaving **alleys between the houses** —
-  that is what makes a street read as separate buildings rather than a wall.
-  The **back row is deliberately continuous** (`wFrac` over 1) as the
-  backstop that closes the sightlines those alleys open.
-- Buildings face the park. Heights alternate short/tall along each row so the
-  skyline is jagged. Houses (under 8.5 m) get a ridge roof, blocks get a flat
-  roof with a parapet.
-- Wall colours must be **varied and fairly saturated**. The first attempt used
-  muted beiges and the sky's blue-green bounce flattened them all into one
-  grey-green wall.
-- The tree belt was pulled in to sit *between* the fence and the houses
-  rather than sprawling past them.
+Three failed passes all added *things* (fence, benches, lamps, houses at
+60–112 m) while leaving every sightline open. Houses that far and 3–6 m tall
+are a strip of dots under an empty sky; the eye goes straight past them.
 
 **`Park.verifyEnclosure()` measures it** — 1,800 rays from five points on the
-court at eye height, and every one must hit a building. It is not decoration:
-adding the alleys took it from 0 escapes to 9, which is how the need for the
-continuous back row was found. **Re-run it after touching any of this.**
+court at eye height, and every one must hit something taller than eye level.
+It reads 0 escapes now. It earned its keep immediately: adding alleys between
+the houses took it from 0 to 9, which is how the need for a continuous
+backstop row was found.
 
-Other dead ends, do not repeat:
+**The test does not care *how* the horizon is blocked.** Trees, walls,
+hedges, an embankment, another court's fencing, a bus shelter, a row of
+garages — anything over eye height counts. So the whole neighbourhood can be
+thrown away and rebuilt in a completely different shape, and this still
+tells you whether the new one works. Re-run it after any change out there.
+
+#### REPLACE: the concentric ring of three-storey blocks
+
+**The owner has explicitly rejected the current implementation as the final
+form** (2026-09-21): *"I want to take away the idea of blocking the horizon
+but I don't want to take away just completely surrounding it with a circle of
+3 story homes."*
+
+They are right. What is in `_buildNeighbourhood` now is a **placeholder that
+proves the principle**, not a design:
+
+- It is a literal circle — three concentric rings walked at even angular
+  steps. From the court the regularity reads, and it feels like a stadium
+  bowl rather than a place.
+- Every side is the same. A real park has a road on one side, back gardens
+  on another, trees on a third, maybe another court on the fourth.
+- Everything is the same *kind* of thing: a box with a roof, 7–15 m. Nothing
+  is one storey, nothing is a wall, a hedge, a garage block or a bus stop.
+
+**What a proper version does instead:** occlude with variety and asymmetry,
+treating each side of the park differently. Sketch, not a spec —
+
+- **One side a street:** kerb, parked cars, one- and two-storey houses set
+  back behind front gardens, driveways and hedges. Power lines overhead.
+- **One side no buildings at all:** dense mature trees and a hedgerow doing
+  the occluding. Cheapest, and it breaks the "ring of houses" feel instantly.
+- **One side another facility:** a second fenced court, tennis courts, a
+  clubhouse or a low school building — long and low rather than tall.
+- **One side a boundary:** a brick wall, a railway embankment, garages.
+- Vary the setback hard. Some things almost against the fence, some 60 m
+  back. The silhouette should never suggest a constant radius.
+
+Height is a blunt instrument for occlusion — **closeness does the same job**.
+A 2.5 m wall at 15 m blocks far more sky than a 12 m block at 78 m, and reads
+as a place rather than a barricade.
+
+#### Dead ends, do not repeat
+
 - Flat green planes as a "far treeline" behind the houses: reads as a
   cardboard wall with the houses pasted on it.
-- A 4-sided `ConeGeometry` roof sized off `max(w,d) * 0.78`. Its base square
-  has *diagonal* 2r, so the roof came out half again as wide as its house
-  and left pale triangles jutting over the grass. Radius is `d / sqrt2`.
-- A footpath placed 28 m out running parallel to the court, connected to
-  nothing: foreshortens into a pale triangle. It now runs out of the gate.
+- A 4-sided `ConeGeometry` roof sized off `max(w, d) * 0.78`. Its base square
+  has *diagonal* 2r, so the roof came out half again as wide as its house and
+  left pale triangles jutting over the grass. The radius is `d / sqrt2`.
+- A footpath placed 28 m out running parallel to the court, attached to
+  nothing: it foreshortens into a pale triangle on the grass.
+- Muted beige walls. The sky's blue-green bounce flattens them all into one
+  grey-green mass; building colours need real variety and some saturation.
 
-Also in: street lamps, leaf litter (260 instanced quads from the decal pack,
-`scripts/prep_decals.py` merges each set's separate alpha into RGBA WebP), a
-bin, and a warmer lower sun with `toneMappingExposure` 1.18 because ACES
-pulls the midtones into mud.
+Also in and worth keeping: street lamps, leaf litter (260 instanced quads
+from the decal pack, `scripts/prep_decals.py` merges each set's separate
+alpha into RGBA WebP), a bin, a footpath out of the gate, and a warmer lower
+sun with `toneMappingExposure` 1.18 because ACES pulls the midtones into mud.
 
 **Still not the reference:** that photograph is golden hour; this is a mild
 late afternoon. The owner has not chosen. Knobs are in `World._buildLights`
