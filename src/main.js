@@ -2,6 +2,7 @@ import { Physics } from './physics/Physics.js';
 import { Settings } from './state/Settings.js';
 import { Game } from './core/Game.js';
 import { loadHandAsset } from './player/HandAsset.js';
+import { loadParkAssets } from './core/Assets.js';
 import { HAND_POSES } from './player/HandModel.js';
 import { SHOT, DRIBBLE } from './core/Constants.js';
 import * as THREE from 'three';
@@ -25,14 +26,17 @@ async function boot() {
     const physics = await Physics.init();
 
     setProgress(0.3, 'Loading the hands…');
-    const handAsset = await loadHandAsset();
+    const [handAsset, parkAssets] = await Promise.all([
+      loadHandAsset(),
+      loadParkAssets((p) => setProgress(0.3 + p * 0.15, 'Growing the park…')),
+    ]);
 
     setProgress(0.45, 'Building the court…');
     const settings = new Settings();
     // Yield a frame so the progress paint lands before the heavy world build.
     await new Promise((r) => requestAnimationFrame(r));
 
-    const game = new Game(physics, settings, handAsset);
+    const game = new Game(physics, settings, handAsset, parkAssets);
     // Exposed for debugging / automated smoke tests.
     window.__game = game;
     window.__THREE = THREE; // for the capture / rigging tools

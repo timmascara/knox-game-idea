@@ -6,7 +6,15 @@ import { COURT } from '../core/Constants.js';
  * canvas (top-down, real proportions) and used as the slab's colour map, which
  * keeps the lines crisp, thin and perfectly aligned without hundreds of line
  * meshes. A single box collider under it handles ball + player contact.
+ *
+ * With `palette.asphalt` the canvas is painted over a tiled asphalt photo
+ * instead of flat colour — the court tint and the key are laid on top at
+ * partial alpha so the grain shows through — and the asphalt's normal and
+ * roughness maps go on the slab via a second UV set (`uv1`, tiled every
+ * `ASPHALT_TILE` metres) since the markings need the whole slab to be one
+ * untiled UV space.
  */
+const ASPHALT_TILE = 2.6;
 export class Court {
   constructor(scene, physics, palette = {}) {
     this.scene = scene;
@@ -18,6 +26,7 @@ export class Court {
     this.apron = palette.apron ?? '#3a5a66';
     this.key = palette.key ?? '#c2683c';
     this.line = palette.line ?? '#eef2f0';
+    this.asphalt = palette.asphalt ?? null;
 
     this._build();
     this._buildCollider();
@@ -41,12 +50,31 @@ export class Court {
     const Z = (z) => ch / 2 + z * ppm;
     const S = (m) => m * ppm;
 
-    // Apron + surface
-    ctx.fillStyle = this.apron;
-    ctx.fillRect(0, 0, cw, ch);
-    ctx.fillStyle = this.surface;
-    this._roundRect(ctx, X(-COURT.width / 2), Z(-COURT.length / 2), S(COURT.width), S(COURT.length), S(0.2));
-    ctx.fill();
+    // Apron + surface. Over asphalt the tints are translucent so the grain
+    // and the cracks come through; the apron gets a darker wash.
+    if (this.asphalt?.diff?.image) {
+      const img = this.asphalt.diff.image;
+      const pat = ctx.createPattern(img, 'repeat');
+      const sc = S(ASPHALT_TILE) / img.width;
+      pat.setTransform(new DOMMatrix().scale(sc, sc));
+      ctx.fillStyle = pat;
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      ctx.fillStyle = this.apron;
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.globalAlpha = 0.42;
+      ctx.fillStyle = this.surface;
+      this._roundRect(ctx, X(-COURT.width / 2), Z(-COURT.length / 2), S(COURT.width), S(COURT.length), S(0.2));
+      ctx.fill();
+      ctx.restore();
+    } else {
+      ctx.fillStyle = this.apron;
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.fillStyle = this.surface;
+      this._roundRect(ctx, X(-COURT.width / 2), Z(-COURT.length / 2), S(COURT.width), S(COURT.length), S(0.2));
+      ctx.fill();
+    }
 
     ctx.strokeStyle = this.line;
     ctx.fillStyle = this.line;
@@ -80,6 +108,22 @@ export class Court {
       roughness: 0.82,
       metalness: 0.0,
     });
+    if (this.asphalt?.nor && this.asphalt?.rough) {
+      // Second UV set for the tiled surface maps: uv scaled to metres/tile.
+      const uv = geo.attributes.uv;
+      const uv1 = new Float32Array(uv.count * 2);
+      for (let i = 0; i < uv.count; i++) {
+        uv1[i * 2] = uv.getX(i) * (worldW / ASPHALT_TILE);
+        uv1[i * 2 + 1] = uv.getY(i) * (worldL / ASPHALT_TILE);
+      }
+      geo.setAttribute('uv1', new THREE.BufferAttribute(uv1, 2));
+      mat.normalMap = this.asphalt.nor;
+      mat.normalMap.channel = 1;
+      mat.normalScale.set(0.6, 0.6);
+      mat.roughnessMap = this.asphalt.rough;
+      mat.roughnessMap.channel = 1;
+      mat.roughness = 1.0;
+    }
     this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.receiveShadow = true;
     this.mesh.position.y = 0.02; // sits just above terrain

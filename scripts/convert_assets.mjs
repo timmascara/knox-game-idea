@@ -205,7 +205,11 @@ for (const name of folders) {
 
     // Stage 4 — resolve external textures, compress, embed into one binary.
     execFileSync('npx', ['--yes', '@gltf-transform/cli@latest', 'optimize', optimizeFrom, out,
-      '--compress', 'draco', '--texture-compress', 'webp', '--texture-size', '2048'],
+      '--compress', 'draco', '--texture-compress', 'webp', '--texture-size', '2048',
+      // optimize's default `join` fuses every node sharing a material into one
+      // mesh, which destroys the per-object split (and any pack that arrived
+      // already separated). Keep nodes as they are.
+      '--no-join'],
       { stdio: 'pipe' });
 
     cleanInterim(dir);

@@ -111,12 +111,25 @@ failing that, drops the reference so the model still converts, untextured
 (it says so in the log). Modelled-blade grass survives this fine with a
 `heightTint`; a texture-atlas model does not, and wants a different download.
 
+## Splitting a fused pack: `"splitObjects": true`
+
+A file holding a whole grove becomes one node per object (`tree_0 …`),
+each rebased so its footprint is the origin. Trunks are found from the
+geometry (ground-touching, ≥ 40 triangles); leaves join the nearest trunk.
+Objects standing on a shared ground patch come out fused — the tree pack
+gives 7 from 9 that way.
+
+## Ground textures: `scripts/prep_ground.py`
+
+Poly Haven downloads are not models; `npm run assets` ignores them. Run
+`python3 scripts/prep_ground.py assets_raw/ground/<zip> <name>` to get
+`src/assets/textures/<name>_{diff,nor,rough}.webp` (EXR normal/roughness
+converted, or roughness pulled from an `arm` pack's G channel).
+
 ## Known gaps
 
 - **Animations in separate files** (the Mixamo pattern) are not merged. The
   script converts the mesh file and ignores the rest.
-- **No splitting.** A file holding nine trees converts as one nine-tree
-  object. Placing them individually needs a separate step that does not exist.
 
 ## Size and licences
 

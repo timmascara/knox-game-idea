@@ -3,18 +3,22 @@ import { COURT, HOOP } from '../core/Constants.js';
 import { Sky } from './Sky.js';
 import { Court } from './Court.js';
 import { Hoop } from './Hoop.js';
+import { Park } from './Park.js';
 
 /**
- * An open outdoor court: a flat asphalt slab with regulation markings, two
- * hoops, a wide dusty ground plane, a ring of distant hills for a horizon and
- * a warm late-afternoon sun. Deliberately sparse — nothing here competes with
- * the ball and the hands for attention.
+ * A park court: an asphalt slab with regulation markings and two hoops, on
+ * a grass ground, ringed by trees and grass clumps from the converted asset
+ * packs (see Park.js), a ring of distant hills for a horizon and a warm
+ * late-afternoon sun. `assets` comes from loadParkAssets(); without it the
+ * world still builds, as the old flat greybox, which is what the harnesses
+ * that construct a World directly get.
  */
 export class World {
-  constructor(scene, physics, quality = 'high') {
+  constructor(scene, physics, quality = 'high', assets = null) {
     this.scene = scene;
     this.physics = physics;
     this.quality = quality;
+    this.assets = assets;
 
     this.sky = new Sky(scene);
     this.sky.apply({ skyTop: 0x3f7fc4, skyBottom: 0xd6e6f0, fogColor: 0xd6e6f0, fogNear: 60, fogFar: 260 });
@@ -28,7 +32,10 @@ export class World {
       apron: '#5d6462',
       key: '#b8573d',
       line: '#f0f0ea',
+      asphalt: assets?.asphalt ?? null,
     });
+
+    if (assets) this.park = new Park(scene, physics, assets);
 
     const basketZ = COURT.length / 2 - COURT.rimFromBaseline;
     this.hoops = [
@@ -63,7 +70,16 @@ export class World {
     const size = 400;
     const geo = new THREE.PlaneGeometry(size, size, 1, 1);
     geo.rotateX(-Math.PI / 2);
-    const mat = new THREE.MeshStandardMaterial({ color: 0x8b8a6e, roughness: 1.0, metalness: 0 });
+    const g = this.assets?.ground;
+    const tile = 3.2; // metres per texture repeat
+    if (g) for (const t of [g.diff, g.nor, g.rough]) t.repeat.set(size / tile, size / tile);
+    // The owner's ground texture (Poly Haven "leafy grass") is a dry, leaf-
+    // strewn lawn whose average colour is tan. A green multiplier pulls it
+    // toward a park in summer without losing the detail; a greener texture
+    // dropped into assets_raw/ground would make this tint unnecessary.
+    const mat = g
+      ? new THREE.MeshStandardMaterial({ map: g.diff, color: 0x8fbe6a, normalMap: g.nor, roughnessMap: g.rough, roughness: 1, metalness: 0 })
+      : new THREE.MeshStandardMaterial({ color: 0x8b8a6e, roughness: 1.0, metalness: 0 });
     this.ground = new THREE.Mesh(geo, mat);
     this.ground.receiveShadow = true;
     this.ground.position.y = -0.02;
@@ -98,9 +114,36 @@ export class World {
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
     geo.setIndex(idx);
     geo.computeVertexNormals();
-    const mat = new THREE.MeshStandardMaterial({ color: 0x7f8c7a, roughness: 1, side: THREE.DoubleSide });
+    // Hazy green-grey so the ring reads as distant tree line over the grass.
+    const mat = new THREE.MeshStandardMaterial({ color: 0x6e8264, roughness: 1, side: THREE.DoubleSide });
     const hills = new THREE.Mesh(geo, mat);
     this.scene.add(hills);
+  }
+
+  /**
+   * Image-based lighting from the sky dome itself: the gradient sky is
+   * rendered into a prefiltered environment map so every PBR material has
+   * something to reflect and the shaded sides of things pick up sky blue
+   * instead of going flat. Needs the renderer, so Game calls it once that
+   * exists. Zero assets, and it is the single biggest change to how the
+   * park reads.
+   */
+  buildEnvironment(renderer) {
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const skyScene = new THREE.Scene();
+    const dome = this.sky.mesh.clone();
+    skyScene.add(dome);
+    // A ground-coloured floor so the lower hemisphere is not sky blue.
+    const floor = new THREE.Mesh(
+      new THREE.CircleGeometry(390, 24),
+      new THREE.MeshBasicMaterial({ color: 0x5d6b3a })
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -1;
+    skyScene.add(floor);
+    this.scene.environment = pmrem.fromScene(skyScene, 0.04).texture;
+    this.scene.environmentIntensity = 0.55;
+    pmrem.dispose();
   }
 
   /** Keep the shadow frustum centred on the player. */

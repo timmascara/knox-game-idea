@@ -26,6 +26,7 @@ import { NodeIO, Accessor } from '@gltf-transform/core';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import sharp from 'sharp';
+import { splitObjects } from './split_objects.mjs';
 
 const [glbPath, srcDir, outPath] = process.argv.slice(2);
 if (!glbPath || !srcDir) {
@@ -88,6 +89,11 @@ if (meta.scale && meta.scale !== 1) {
     }
   }
   changes.push(`scale x${meta.scale} applied at the scene roots`);
+}
+
+if (meta.splitObjects) {
+  const n = splitObjects(doc, { name: meta.name || basename(srcDir) });
+  changes.push(`split into ${n} objects (${meta.name || basename(srcDir)}_0 … _${n - 1})`);
 }
 
 if (meta.heightTint) {

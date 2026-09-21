@@ -14,8 +14,11 @@ export default defineConfig({
     sourcemap: true,
     outDir: 'dist',
     chunkSizeWarningLimit: 4000,
-    // The rigged hand (~1.8 MB) is inlined so the single-file build works.
-    assetsInlineLimit: 4 * 1024 * 1024,
+    // Only the rigged hand is inlined (so the single-file build works and
+    // HandAsset.js can base64-decode it under a strict CSP). Park models and
+    // textures are fetched as files: inlining megabytes of GLB and WebP into
+    // the JS bundle would make every load pay for the whole park up front.
+    assetsInlineLimit: (file) => /hand_right\.glb$/.test(file),
   },
   optimizeDeps: {
     exclude: ['@dimforge/rapier3d-compat'],

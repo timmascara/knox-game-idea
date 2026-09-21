@@ -19,7 +19,7 @@ import { codeLabel } from './Bindings.js';
  * runs the fixed-order update loop, and mediates pause / settings / audio.
  */
 export class Game {
-  constructor(physics, settings, handAsset) {
+  constructor(physics, settings, handAsset, assets = null) {
     this.physics = physics;
     this.settings = settings;
     this.handAsset = handAsset;
@@ -38,7 +38,8 @@ export class Game {
     this.audio = new AudioManager(settings);
     this.hud = new HUD();
 
-    this.world = new World(this.scene, this.physics, settings.get('quality'));
+    this.world = new World(this.scene, this.physics, settings.get('quality'), assets);
+    this.world.buildEnvironment(this.renderer);
     this._initPlayer();
     this._initInput();
     this._initMenu();

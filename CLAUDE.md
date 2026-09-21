@@ -20,9 +20,11 @@ the next thing.
   *Shooting* below. The owner's first-play notes were: a jump key that
   feels right while moving, layups, and the ball not running away after a
   make — all done; the sounds and the meter speed still have no verdict.
-- **Stage 3 — the park. Chosen by the owner, not started.** See *The
-  owner's actual goal*. The asset pipeline is built; nothing loads a model
-  into the world yet.
+- **Stage 3 — the park. First cut built, not yet played.** Trees, grass
+  clumps, a grass ground and an asphalt court surface from the owner's
+  downloaded packs, plus image-based lighting from the sky. See *The park*
+  below. Still to come: ambience audio, distant people, leaf scatter, and
+  the court itself becoming a park court rather than an NBA layout.
 
 ## Leave the repo ready for the next session
 
@@ -212,6 +214,64 @@ than the grass.
 **Not solved:** animations in separate files (the Mixamo pattern) are not
 merged, and nothing splits a multi-object file into separately placeable
 models — which the tree pack needs before it can be instanced around a park.
+
+## The park — how it is built
+
+`src/core/Assets.js` loads everything the park needs up front
+(`loadParkAssets`, run in parallel with the hands during boot) and hands it
+to `Game` → `World` → `Park`. `World` still builds without it, as the old
+greybox, which is what any harness constructing a `World` directly gets.
+
+- **`src/world/Park.js`** places trees and grass by a seeded scatter
+  (`mulberry32(7)`, so every load is the same park) and instances them:
+  one `InstancedMesh` per primitive per variant, the node's own transform
+  folded into each instance matrix (that is what stands the Z-up grass
+  upright). Trees get a fixed Rapier cylinder for the trunk so the player
+  and the ball stop at them; grass has no collider. 34 trees in a ring
+  12–42 m out, 220 grass clumps in a band hugging the apron. ~2.1 M
+  triangles, ~95 draw calls.
+- **Ground** is the 400 m plane with the Poly Haven "leafy grass" set tiled
+  every 3.2 m. That texture is a dry, leaf-strewn lawn, average colour tan,
+  so the material carries a green `color` multiplier (`0x8fbe6a`). A
+  genuinely green texture dropped into `assets_raw/ground/` would make the
+  tint unnecessary.
+- **Court** (`Court.js`): the markings canvas is painted over a tiled
+  asphalt photo (`createPattern`, one tile per 2.6 m), with the court and
+  apron tints laid on at partial alpha so the grain shows. The asphalt's
+  normal and roughness maps go on the slab through a **second UV set**
+  (`uv1`, `texture.channel = 1`) because the markings need the whole slab
+  to be one untiled UV space and three.js allows one transform per UV
+  channel.
+- **Environment light** (`World.buildEnvironment`): the gradient sky dome is
+  rendered through `PMREMGenerator` into `scene.environment` at intensity
+  0.55, over a ground-coloured floor so the lower hemisphere is not blue.
+  Zero assets. Must run after the renderer exists — `Game` calls it right
+  after constructing the world, not inside `_initRenderer`, which runs
+  first (that ordering bug was the one boot failure this cut had).
+- **Draco decoder** lives in `public/draco/` (wasm + wrapper, ~250 KB) and
+  is served as files; `DRACOLoader.setDecoderPath(BASE_URL + 'draco/')`.
+  WebP textures need nothing — `GLTFLoader` handles `EXT_texture_webp`.
+- **`vite.config.js` inlines only the hand GLB now** (`assetsInlineLimit`
+  is a function). Park models and textures are fetched as files, ~3 MB
+  total. The single-file artifact build therefore no longer carries the
+  park; the Pages build is the target, as recorded below.
+
+**Splitting fused packs** (`scripts/split_objects.mjs`, `meta.json`
+`"splitObjects": true`): connected components over the triangle graph,
+ground-touching components of ≥ 40 triangles are trunk seeds (a leaf card
+brushing the grass is two triangles and must not seed a tree), seeds within
+1.5 m merge, everything else joins the nearest seed in the ground plane,
+and each cluster becomes a node `tree_<i>` rebased to its footprint. Two
+lessons: OBJ `l` elements arrive as LINES primitives and poison the
+triangle walk unless skipped; and `gltf-transform optimize` **joins nodes
+by default** (`--no-join` now), which is what had fused the pack into two
+meshes in the first place. Result on the tree pack: **7 placeable trees**,
+not 9 — two pairs of saplings share a ground patch and come out as a pair.
+Acceptable; not worth more time.
+
+**Verified by rendering the real game headless** (screenshots/world_*.png
+from a throwaway script — the pattern is in `scripts/preview_asset.mjs`):
+34 trees, 220 clumps, environment on, no console errors.
 
 ## Invariants — the smoke test enforces these
 
@@ -597,13 +657,13 @@ full NBA two-hoop layout, which is the wrong court for a park.
 Infrastructure that does **not** exist yet and is needed before any of this
 lands (all verified absent by grep):
 
-- **An asset pipeline now exists** (above) and `src/assets/tree.glb` is
-  converted and verified rendering. Nothing loads it yet.
-- **No `LoadingManager`.** One hardcoded GLB import is the entire asset system.
-- **No `InstancedMesh`.** Trees and grass cannot be placed as individual meshes.
+- ~~Asset loading, instancing, environment map~~ — **built in the first
+  park cut** (see *The park*). Still absent:
 - **No `LOD` or `Sprite`.** Nothing for distant kids as billboard imposters.
-- **No environment map** anywhere — `scene.environment` is never set, so every
-  `MeshStandardMaterial` is running PBR with no IBL. Cheap, large win.
+- **No leaf scatter** — `assets_raw/leaf_decals/` is converted-ready but
+  nothing places the cut-outs.
+- **The court is still the NBA two-hoop layout.** A park court is the
+  owner's stated want; not yet redrawn.
 - **Audio sfx are drop-in** (`src/assets/audio/`, see the Audio section),
   but only one-shot effects keyed to game events. Bird and park *ambience*
   is a looping bed with no event to trigger it — that needs a small
