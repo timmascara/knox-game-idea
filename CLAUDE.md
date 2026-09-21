@@ -320,6 +320,62 @@ rewriting every reference (GLTFLoader sniffs content, not extension;
 `npm run build && npm run artifact` and publish `.artifact/index.html` with
 the printed file map.
 
+### What makes it read as a park (the owner's second look)
+
+The owner's verdict on the fenced cut: *"it looks like a park and not an
+open plains with some trees"* — about a **reference photograph**, not about
+what was on screen. What was on screen was still plains. The lesson, and it
+is the important one in this whole section:
+
+**A park is defined by what is beyond its fence.** Court → fence → grass →
+trees → horizon is a court in a field, however good each layer is. The eye
+runs to the horizon and finds nothing, so the scene reads as open country.
+What fixed it was giving the world an edge:
+
+- **Houses** (`_buildNeighbourhood`): ~54 boxes with four-sided cone roofs at
+  60–112 m, a one-band window texture, domestic sizes (5–11 m wide, 3–6 m
+  tall). A few hundred triangles total and it is the single biggest change
+  in the whole park. Earlier passes had them bigger and closer and they read
+  as barracks — keep them small and far.
+- **Street lamps** (`_buildLamps`): five, with a curved arm over the court.
+  Nothing says municipal park faster.
+- **Leaf litter** (`_scatterLeaves`): 260 instanced quads from the decal pack
+  (`scripts/prep_decals.py` merges each set's separate alpha into an RGBA
+  WebP). Two triangles each, and they do more for "nobody has swept this in
+  a month" than any geometry would.
+- A bin and a footpath out of the west gate.
+- **Warmer, lower sun** — `sunOffset` (24, 21, 12), 0xffdfb4 at 3.8, and
+  `toneMappingExposure` 1.18 because ACES pulls the midtones down hard.
+
+**Dead end, do not repeat:** a ring of flat green planes as a "far treeline"
+behind the houses. It reads as a cardboard wall the houses are pasted on to.
+Real trees near, houses in the middle distance and the hill ring far away
+are already three layers of depth; a fourth flat one only looks flat.
+
+**Still not the reference:** that photograph is golden hour, and the light
+here is a mild late afternoon. The owner has not said which they want, so it
+has not been pushed further. Every knob is in `World._buildLights` and
+`Game._initRenderer`.
+
+### Performance
+
+The owner reported the build going "SUPER LAGGY" — while on 3% battery,
+which puts a Mac in Low Power Mode and throttles the GPU hard, so that is
+the likely cause rather than the scene. Treat it as unconfirmed until they
+run it on mains power. **Do not let that excuse a sloppy scene**, though;
+two real faults were found looking into it:
+
+- `frustumCulled = false` was set on every scattered InstancedMesh. Nothing
+  could ever be culled, including from the **shadow pass**, which re-renders
+  every caster every frame.
+- Every tree cast shadows, at any distance. Trees now only cast within 30 m
+  (`SHADOW_RANGE` in `_placeTrees`) — beyond that the shadow lands where no
+  one can see it and is pure cost.
+
+Current: **1.53 M triangles, ~149 draw calls.** If it needs to go lower, the
+next levers in order are the grass count, the shadow map size (2048), and
+chunking the scatter spatially so culling can actually reject cells.
+
 ### Triangle budget — the harness is the canary
 
 `scripts/smoke.mjs` renders through SwiftShader with no GPU, so a scene the

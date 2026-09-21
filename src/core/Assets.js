@@ -8,6 +8,9 @@ import asphaltRoughUrl from '../assets/textures/asphalt_rough.webp?url';
 import groundDiffUrl from '../assets/textures/grass_ground_diff.webp?url';
 import groundNorUrl from '../assets/textures/grass_ground_nor.webp?url';
 import groundRoughUrl from '../assets/textures/grass_ground_rough.webp?url';
+import decal1Url from '../assets/textures/decal_leaves_02.webp?url';
+import decal2Url from '../assets/textures/decal_leaves_05.webp?url';
+import decal3Url from '../assets/textures/decal_leaves_08.webp?url';
 
 /**
  * Everything the park is built from, loaded once up front so the world can
@@ -42,10 +45,11 @@ export async function loadParkAssets(onProgress = () => {}) {
     );
 
   let done = 0;
-  const total = 8;
+  const total = 11;
   const tick = (v) => { done++; onProgress(done / total); return v; };
 
-  const [tree, grass, asphaltDiff, asphaltNor, asphaltRough, groundDiff, groundNor, groundRough] = await Promise.all([
+  const [tree, grass, asphaltDiff, asphaltNor, asphaltRough, groundDiff, groundNor, groundRough,
+         decal1, decal2, decal3] = await Promise.all([
     glb(model('tree')).then(tick),
     glb(model('grass')).then(tick),
     texture(asphaltDiffUrl, { srgb: true }).then(tick),
@@ -54,6 +58,9 @@ export async function loadParkAssets(onProgress = () => {}) {
     texture(groundDiffUrl, { srgb: true }).then(tick),
     texture(groundNorUrl).then(tick),
     texture(groundRoughUrl).then(tick),
+    texture(decal1Url, { srgb: true }).then(tick),
+    texture(decal2Url, { srgb: true }).then(tick),
+    texture(decal3Url, { srgb: true }).then(tick),
   ]);
   draco.dispose();
 
@@ -62,5 +69,6 @@ export async function loadParkAssets(onProgress = () => {}) {
     grass: grass.scene,
     asphalt: { diff: asphaltDiff, nor: asphaltNor, rough: asphaltRough },
     ground: { diff: groundDiff, nor: groundNor, rough: groundRough },
+    decals: [decal1, decal2, decal3],
   };
 }

@@ -21,7 +21,7 @@ export class World {
     this.assets = assets;
 
     this.sky = new Sky(scene);
-    this.sky.apply({ skyTop: 0x3f7fc4, skyBottom: 0xd6e6f0, fogColor: 0xd6e6f0, fogNear: 60, fogFar: 260 });
+    this.sky.apply({ skyTop: 0x5f9ad6, skyBottom: 0xf6e3c6, fogColor: 0xe9dcc4, fogNear: 80, fogFar: 320 });
 
     this._buildLights();
     this._buildGround();
@@ -45,10 +45,10 @@ export class World {
   }
 
   _buildLights() {
-    this.hemi = new THREE.HemisphereLight(0xcfe3f2, 0x6d6a5a, 0.9);
+    this.hemi = new THREE.HemisphereLight(0xcde3f6, 0x7a7154, 0.95);
     this.scene.add(this.hemi);
 
-    this.sun = new THREE.DirectionalLight(0xfff0d8, 2.6);
+    this.sun = new THREE.DirectionalLight(0xffdfb4, 3.8);
     this.sun.castShadow = true;
     const res = this.quality === 'low' ? 1024 : 2048;
     this.sun.shadow.mapSize.set(res, res);
@@ -61,7 +61,9 @@ export class World {
     this.sun.shadow.camera.far = 80;
     this.sun.shadow.bias = -0.0006;
     this.sun.shadow.normalBias = 0.05;
-    this.sunOffset = new THREE.Vector3(18, 26, 10);
+    // Low and to the side: long shadows across the court, which is most of
+    // what makes late afternoon read as late afternoon.
+    this.sunOffset = new THREE.Vector3(24, 21, 12);
     this.scene.add(this.sun);
     this.scene.add(this.sun.target);
   }
@@ -115,7 +117,7 @@ export class World {
     geo.setIndex(idx);
     geo.computeVertexNormals();
     // Hazy green-grey so the ring reads as distant tree line over the grass.
-    const mat = new THREE.MeshStandardMaterial({ color: 0x6e8264, roughness: 1, side: THREE.DoubleSide });
+    const mat = new THREE.MeshStandardMaterial({ color: 0x67775e, roughness: 1, side: THREE.DoubleSide });
     const hills = new THREE.Mesh(geo, mat);
     this.scene.add(hills);
   }
@@ -142,7 +144,7 @@ export class World {
     floor.position.y = -1;
     skyScene.add(floor);
     this.scene.environment = pmrem.fromScene(skyScene, 0.04).texture;
-    this.scene.environmentIntensity = 0.55;
+    this.scene.environmentIntensity = 0.62;
     pmrem.dispose();
   }
 

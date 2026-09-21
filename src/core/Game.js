@@ -58,7 +58,9 @@ export class Game {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.0;
+    // ACES pulls the midtones down hard; a touch over 1 keeps the late
+    // afternoon warm rather than murky.
+    this.renderer.toneMappingExposure = 1.18;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     document.getElementById('app').appendChild(this.renderer.domElement);
   }
